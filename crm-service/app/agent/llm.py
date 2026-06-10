@@ -198,9 +198,9 @@ class DualLLMClient:
         if not client:
             return None
 
-        def _sync_call():
+        def _sync_call(model_name: str):
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_input},
@@ -210,9 +210,23 @@ class DualLLMClient:
             )
             return response.choices[0].message.content
 
-        result = await asyncio.to_thread(_sync_call)
-        logger.debug(f"Groq response: {result[:200]}...")
-        return result
+        try:
+            result = await asyncio.to_thread(_sync_call, "llama-3.3-70b-versatile")
+            logger.debug(f"Groq response: {result[:200]}...")
+            return result
+        except Exception as e:
+            err_str = str(e).lower()
+            if "rate_limit" in err_str or "429" in err_str or "limit reached" in err_str:
+                logger.warning(f"Groq model llama-3.3-70b-versatile rate limited, retrying with llama-3.1-8b-instant: {e}")
+                try:
+                    result = await asyncio.to_thread(_sync_call, "llama-3.1-8b-instant")
+                    logger.debug(f"Groq fallback response: {result[:200]}...")
+                    return result
+                except Exception as ex:
+                    logger.error(f"Groq fallback model llama-3.1-8b-instant also failed: {ex}")
+                    raise ex
+            else:
+                raise e
 
     @property
     def is_configured(self) -> bool:
