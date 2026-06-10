@@ -149,12 +149,10 @@ from app.routers.customer_router import router as customer_router
 from app.routers.order_router import router as order_router
 from app.routers.receipt_router import router as receipt_router
 from app.routers.campaign_router import router as campaign_router
+from app.routers.chat_router import router as chat_router
 
 app.include_router(customer_router)
 app.include_router(order_router)
 app.include_router(receipt_router)
 app.include_router(campaign_router)
-
-# Future routers (added in later phases):
-# Phase 8: chat_router
-# Phase 9: analytics_router
+app.include_router(chat_router)
