@@ -229,9 +229,10 @@ TABLE orders:
 RULES:
 1. Check the conversation history and the campaign brief.
 2. If the user mentions a city, segment, or criteria, or if you need to suggest a target audience (like active/lapsed/VIP) and want to show their real counts to make the recommendation data-driven, generate a safe SELECT query to fetch this info.
-3. Keep the SQL simple and performant. Use a LIMIT of 100 for lists, or count/aggregates.
-4. If you already have the data, or if the conversation is about other topics like channel selection, message copywriting, or simple greetings, do NOT generate a query (set "sql_query" to null).
-5. Do NOT use emojis anywhere in your query reasoning or SQL.
+3. STRICT SCHEMA ALIGNMENT: Do NOT assume or guess column names. There are no columns like 'is_vip', 'is_active', 'is_lapsed', or 'status' in the 'customers' table. For VIP, active, lapsed, or new customer segments, check tags using the ANY(tags) syntax (e.g. 'vip' = ANY(tags), 'lapsed' = ANY(tags)).
+4. Keep the SQL simple and performant. Use a LIMIT of 100 for lists, or count/aggregates.
+5. If you already have the data, or if the conversation is about other topics like channel selection, message copywriting, or simple greetings, do NOT generate a query (set "sql_query" to null).
+6. Do NOT use emojis anywhere in your query reasoning or SQL.
 
 RESPONSE FORMAT — Return ONLY a JSON object:
 {

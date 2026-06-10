@@ -103,7 +103,11 @@ class DualLLMClient:
         groq = self._get_groq()
         if groq:
             try:
-                result = await self._call_groq(system_prompt, user_input)
+                result = await self._call_groq(
+                    system_prompt,
+                    user_input,
+                    response_format={"type": "json_object"},
+                )
                 if result:
                     return result
             except Exception as e:
@@ -191,6 +195,7 @@ class DualLLMClient:
         self,
         system_prompt: str,
         user_input: str,
+        response_format: Optional[dict] = None,
     ) -> Optional[str]:
         """Call Groq API."""
         import asyncio
@@ -199,15 +204,18 @@ class DualLLMClient:
             return None
 
         def _sync_call(model_name: str):
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
+            kwargs = {
+                "model": model_name,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_input},
                 ],
-                temperature=0.3,
-                max_tokens=2048,
-            )
+                "temperature": 0.3,
+                "max_tokens": 2048,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+            response = client.chat.completions.create(**kwargs)
             return response.choices[0].message.content
 
         try:
