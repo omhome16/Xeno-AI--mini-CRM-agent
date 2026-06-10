@@ -30,14 +30,31 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
     Parse the user's natural language message into structured intent.
 
-    Input: state.user_message
+    Input: state.user_message, state.messages (conversation history)
     Output: action, audience_description, message_description, channel, offer_details
     """
     logger.info(f"Parsing intent: {state['user_message'][:100]}...")
 
+    # Build context from conversation history
+    history = state.get("messages", [])
+    context_parts = []
+    for msg in history[-6:]:  # Last 6 messages for context
+        role = msg.get("role", msg.get("type", "user"))
+        content = msg.get("content", "")
+        if content:
+            context_parts.append(f"{role}: {content}")
+
+    user_input = state["user_message"]
+    if context_parts:
+        user_input = (
+            "Previous conversation:\n"
+            + "\n".join(context_parts)
+            + f"\n\nCurrent message: {state['user_message']}"
+        )
+
     result = await llm_client.reason(
         system_prompt=INTENT_PARSING_PROMPT,
-        user_input=state["user_message"],
+        user_input=user_input,
     )
 
     # Parse JSON response

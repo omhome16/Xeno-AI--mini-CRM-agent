@@ -2,11 +2,15 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Chat API ──
 
-export async function startChat(message: string, mode: string): Promise<{ conversation_id: string }> {
+export async function startChat(
+  message: string,
+  mode: string,
+  history: { role: string; content: string }[] = [],
+): Promise<{ conversation_id: string }> {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, mode }),
+    body: JSON.stringify({ message, mode, history }),
   });
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
   return res.json();

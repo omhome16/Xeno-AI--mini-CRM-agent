@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp, Sparkles, Zap } from 'lucide-react';
+import { ArrowUp, Sparkles, Zap, Check } from 'lucide-react';
 import { startChat, resumeChat, connectSSE } from '../api';
 import InterruptCard from './InterruptCard';
+import CustomerPreviewTable from './CustomerPreviewTable';
 
 interface Message {
   id: string;
@@ -100,7 +101,14 @@ export default function ChatPage({ messages, setMessages }: ChatPageProps) {
     setIsProcessing(true);
     addMessage({ type: 'user', content: msg });
     try {
-      const result = await startChat(msg, mode);
+      const historyParam = messages
+        .filter(m => m.type === 'user' || m.type === 'agent')
+        .map(m => ({
+          role: m.type === 'user' ? 'user' : 'assistant',
+          content: m.content
+        }));
+
+      const result = await startChat(msg, mode, historyParam);
       setConversationId(result.conversation_id);
       const es = connectSSE(result.conversation_id, handleSSEEvent);
       setEventSource(prev => { prev?.close(); return es; });
@@ -163,13 +171,60 @@ export default function ChatPage({ messages, setMessages }: ChatPageProps) {
             return <InterruptCard key={msg.id} data={msg.data as Record<string, unknown>} onRespond={handleResume} />;
           }
           if (msg.type === 'step') {
+            const isLastStep = messages.filter(m => m.type === 'step').pop()?.id === msg.id;
+            const showSpinner = isLastStep && isProcessing;
             return (
               <div key={msg.id} className="step-indicator">
-                <div className="spinner" />
+                {showSpinner ? (
+                  <div className="spinner" />
+                ) : (
+                  <div className="step-check"><Check size={10} /></div>
+                )}
                 {msg.content}
               </div>
             );
           }
+
+          if (msg.type === 'agent') {
+            const hasPreview = msg.data && typeof msg.data === 'object' && 'audience_preview' in (msg.data as any);
+            const data = msg.data as any;
+            return (
+              <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, alignSelf: 'flex-start', maxWidth: '88%', width: '100%' }}>
+                <div className="chat-bubble agent" style={{ maxWidth: '85%' }}>
+                  {msg.content}
+                </div>
+                {hasPreview && data.audience_preview && data.audience_preview.length > 0 && (
+                  <div className="interrupt-card" style={{ maxWidth: '100%', width: '100%', margin: '0 0 10px 0', animation: 'none' }}>
+                    <div className="card-header">
+                      <div className="card-icon segment" style={{ background: 'rgba(96, 165, 250, 0.12)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                      </div>
+                      <h3 style={{ fontSize: 14, fontWeight: 700 }}>Query Results</h3>
+                    </div>
+                    <div className="card-body" style={{ margin: 0 }}>
+                      {data.audience_sql && (
+                        <div style={{
+                          fontSize: 11,
+                          fontFamily: "'SFMono-Regular', 'Consolas', monospace",
+                          background: 'rgba(0,0,0,0.03)',
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          marginBottom: 10,
+                          color: 'var(--text-muted)',
+                          wordBreak: 'break-all',
+                          lineHeight: 1.4,
+                        }}>
+                          {data.audience_sql}
+                        </div>
+                      )}
+                      <CustomerPreviewTable preview={data.audience_preview} totalCount={data.audience_count || 0} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
           return (
             <div key={msg.id} className={`chat-bubble ${msg.type}`}>
               {msg.content}
@@ -177,8 +232,8 @@ export default function ChatPage({ messages, setMessages }: ChatPageProps) {
           );
         })}
 
-        {isProcessing && messages[messages.length - 1]?.type !== 'step' && (
-          <div className="chat-bubble agent">
+        {isProcessing && (messages.length === 0 || messages[messages.length - 1]?.type !== 'step') && (
+          <div className="chat-bubble agent" style={{ alignSelf: 'flex-start' }}>
             <div className="loading-dots"><span /><span /><span /></div>
           </div>
         )}

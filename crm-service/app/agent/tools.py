@@ -47,7 +47,7 @@ async def query_customers(llm_client, audience_description: str) -> dict:
         audience_description: Natural language description of target audience.
 
     Returns:
-        Dict with sql, results, count.
+        Dict with sql, results, count, total_count.
     """
     # Step 1: Generate SQL via LLM
     raw_sql = await llm_client.reason(
@@ -78,6 +78,22 @@ async def query_customers(llm_client, audience_description: str) -> dict:
         async with readonly_pool.acquire() as conn:
             await conn.execute("SET statement_timeout = '5000'")
             rows = await conn.fetch(safe_sql)
+
+            # Step 3b: Get the TRUE total count (without LIMIT)
+            # Wrap the base query (without LIMIT/ORDER) in COUNT(*)
+            import re
+            count_sql = safe_sql
+            # Remove LIMIT clause
+            count_sql = re.sub(r'\s+LIMIT\s+\d+', '', count_sql, flags=re.IGNORECASE)
+            # Remove ORDER BY clause
+            count_sql = re.sub(r'\s+ORDER\s+BY\s+[\w.,\s]+(?:ASC|DESC)?', '', count_sql, flags=re.IGNORECASE)
+            count_sql = f"SELECT COUNT(*) as total FROM ({count_sql}) _sub"
+            try:
+                total_row = await conn.fetchrow(count_sql)
+                total_count = total_row["total"] if total_row else len(rows)
+            except Exception:
+                total_count = len(rows)
+
     except Exception as e:
         logger.error(f"SQL execution failed: {e}")
         return {
@@ -105,8 +121,8 @@ async def query_customers(llm_client, audience_description: str) -> dict:
 
     return {
         "sql": safe_sql,
-        "results": results[:10],  # Return first 10 for preview
-        "count": len(rows),
+        "results": results,  # Return ALL fetched rows for preview
+        "count": total_count,  # TRUE total, not limited by LIMIT
     }
 
 

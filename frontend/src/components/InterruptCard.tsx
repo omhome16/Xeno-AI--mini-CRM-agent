@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Users, MessageSquare, Rocket, Check, X, Pencil, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Users, MessageSquare, Rocket, Check, X, Pencil, RefreshCw } from 'lucide-react';
+import CustomerPreviewTable from './CustomerPreviewTable';
 
 interface InterruptCardProps {
   data: Record<string, unknown>;
@@ -9,11 +10,8 @@ interface InterruptCardProps {
 function SegmentReviewCard({ data, onRespond }: InterruptCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const [showAll, setShowAll] = useState(false);
 
   const preview = (data.audience_preview as Record<string, unknown>[]) || [];
-  const displayCount = showAll ? preview.length : 5;
-  const hasMore = preview.length > 5;
 
   return (
     <div className="interrupt-card">
@@ -26,7 +24,7 @@ function SegmentReviewCard({ data, onRespond }: InterruptCardProps) {
           Found <strong>{data.audience_count as number}</strong> customers matching your criteria
         </p>
 
-        {data.audience_sql && (
+        {typeof data.audience_sql === 'string' && data.audience_sql && (
           <div style={{
             fontSize: 11.5,
             fontFamily: "'SFMono-Regular', 'Consolas', monospace",
@@ -43,34 +41,7 @@ function SegmentReviewCard({ data, onRespond }: InterruptCardProps) {
         )}
 
         {preview.length > 0 && (
-          <>
-            <table className="preview-table">
-              <thead>
-                <tr><th>Name</th><th>City</th><th>Spent</th><th>Orders</th></tr>
-              </thead>
-              <tbody>
-                {preview.slice(0, displayCount).map((c, i) => (
-                  <tr key={i}>
-                    <td>{c.name as string}</td>
-                    <td>{c.city as string || '\u2014'}</td>
-                    <td>{'\u20B9'}{Number(c.total_spent || 0).toLocaleString('en-IN')}</td>
-                    <td>{c.total_orders as number || 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {hasMore && (
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
-                onClick={() => setShowAll(!showAll)}
-              >
-                {showAll ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                {showAll ? `Show less` : `View all ${preview.length} results`}
-              </button>
-            )}
-          </>
+          <CustomerPreviewTable preview={preview} totalCount={data.audience_count as number} />
         )}
 
         {isEditing && (
@@ -179,7 +150,7 @@ function CampaignConfirmCard({ data, onRespond }: InterruptCardProps) {
           </div>
         </div>
 
-        {data.message_preview && (
+        {typeof data.message_preview === 'string' && data.message_preview && (
           <div className="message-preview" style={{ fontSize: 13 }}>
             {data.message_preview as string}
           </div>

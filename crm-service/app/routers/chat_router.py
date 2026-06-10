@@ -49,6 +49,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     mode: str = Field(default="guided", pattern="^(guided|autopilot)$")
     conversation_id: Optional[str] = None
+    history: list[dict] = Field(default_factory=list, description="Previous conversation messages for context")
 
 
 class ResumeRequest(BaseModel):
@@ -207,7 +208,7 @@ async def start_chat(request: ChatRequest):
         "user_message": request.message,
         "mode": request.mode,
         "conversation_id": conversation_id,
-        "messages": [],
+        "messages": request.history[-10:],  # Last 10 messages for context
         "current_step": "starting",
     }
 
