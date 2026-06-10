@@ -42,6 +42,7 @@ import logging
 from functools import partial
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.state import CampaignState
 from app.agent.llm import DualLLMClient
@@ -133,4 +134,4 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
     graph.add_conditional_edges("confirm_campaign", _route_after_confirm)
     graph.add_edge("execute_campaign", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())

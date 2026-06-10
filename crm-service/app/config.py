@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # ── Database ──
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/xeno_crm"
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5433/xeno_crm"
 
     # ── Redis ──
     REDIS_URL: str = "redis://localhost:6379"
@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     model_config = {
-        "env_file": ".env",
+        "env_file": ("../.env", ".env"),
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
+        "extra": "ignore",
     }
 
 

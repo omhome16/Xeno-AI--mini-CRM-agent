@@ -14,7 +14,21 @@ Architecture:
 import asyncio
 import json
 import logging
+from decimal import Decimal
+from uuid import UUID
 from typing import Any, AsyncGenerator
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder that handles Decimal, UUID, datetime from asyncpg."""
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return float(o)
+        if isinstance(o, UUID):
+            return str(o)
+        if hasattr(o, 'isoformat'):
+            return o.isoformat()
+        return super().default(o)
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +100,7 @@ async def event_stream(conversation_id: str) -> AsyncGenerator[str, None]:
                 continue
 
             event_type = event.get("type", "message")
-            data = json.dumps(event.get("data", {}))
+            data = json.dumps(event.get("data", {}), cls=_SafeEncoder)
 
             yield f"event: {event_type}\ndata: {data}\n\n"
 

@@ -88,12 +88,15 @@ async def query_customers(llm_client, audience_description: str) -> dict:
         }
 
     # Convert to serializable format
+    from decimal import Decimal
     results = []
     for row in rows:
         record = {}
         for key, value in dict(row).items():
             if isinstance(value, UUID):
                 record[key] = str(value)
+            elif isinstance(value, Decimal):
+                record[key] = float(value)
             elif hasattr(value, "isoformat"):
                 record[key] = value.isoformat()
             else:
