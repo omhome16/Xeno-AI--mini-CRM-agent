@@ -31,13 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_json_response(text: str) -> dict:
-    """Parse a JSON response from an LLM, handling code fences."""
+    """Parse a JSON response from an LLM, handling code fences and preambles."""
     text = text.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        import re
+        match = re.search(r'(\{.*\})', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
         logger.warning(f"Failed to parse JSON: {text[:200]}")
         return {}
 
