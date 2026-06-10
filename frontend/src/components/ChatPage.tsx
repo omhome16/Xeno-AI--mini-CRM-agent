@@ -97,38 +97,53 @@ export default function ChatPage() {
         setBrief(newBrief);
         setReadyToPlan(isReady);
 
-        setMessages(prev => [...prev, {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: aiResponse,
-          suggestions,
-        }]);
+        setMessages(prev => {
+          if (prev.some(m => m.content === aiResponse)) return prev;
+          return [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: aiResponse,
+            suggestions,
+          }];
+        });
         setLoading(false);
       } else if (step === 'respond_general' && data) {
-        setMessages(prev => [...prev, {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: data.ai_response || 'I\'m here to help!',
-        }]);
+        const aiResponse = data.ai_response || 'I\'m here to help!';
+        setMessages(prev => {
+          if (prev.some(m => m.content === aiResponse)) return prev;
+          return [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: aiResponse,
+          }];
+        });
         setLoading(false);
       } else if (step === 'build_segment' && data) {
         // Query result
         if (data.error) {
-          setMessages(prev => [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: `❌ ${data.error}`,
-          }]);
+          const errMsg = `❌ ${data.error}`;
+          setMessages(prev => {
+            if (prev.some(m => m.content === errMsg)) return prev;
+            return [...prev, {
+              id: `ai-${Date.now()}`,
+              role: 'assistant',
+              content: errMsg,
+            }];
+          });
         } else {
           const count = data.audience_count || 0;
           const preview = data.audience_preview || [];
-          setMessages(prev => [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: `Found **${count.toLocaleString()} customers** matching your query.`,
-            customerPreview: preview,
-            customerCount: count,
-          }]);
+          const countMsg = `Found **${count.toLocaleString()} customers** matching your query.`;
+          setMessages(prev => {
+            if (prev.some(m => m.content === countMsg)) return prev;
+            return [...prev, {
+              id: `ai-${Date.now()}`,
+              role: 'assistant',
+              content: countMsg,
+              customerPreview: preview,
+              customerCount: count,
+            }];
+          });
         }
         setLoading(false);
       }
@@ -136,13 +151,16 @@ export default function ChatPage() {
       const state = event.data?.state || {};
 
       // If this was a query/general and we haven't processed it via step_complete
-      if (state.ai_response && !messages.find(m => m.content === state.ai_response)) {
-        setMessages(prev => [...prev, {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: state.ai_response,
-          suggestions: state.suggestions || [],
-        }]);
+      if (state.ai_response) {
+        setMessages(prev => {
+          if (prev.some(m => m.content === state.ai_response)) return prev;
+          return [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: state.ai_response,
+            suggestions: state.suggestions || [],
+          }];
+        });
 
         if (state.brief) setBrief(state.brief);
         if (state.ready_to_plan) setReadyToPlan(true);
@@ -150,25 +168,33 @@ export default function ChatPage() {
 
       // Handle query_customers result
       if (state.action === 'query_customers' && state.audience_count && !state.ai_response) {
-        setMessages(prev => [...prev, {
-          id: `ai-${Date.now()}`,
-          role: 'assistant',
-          content: `Found **${(state.audience_count || 0).toLocaleString()} customers** matching your query.`,
-          customerPreview: state.audience_preview || [],
-          customerCount: state.audience_count,
-        }]);
+        const queryMsg = `Found **${(state.audience_count || 0).toLocaleString()} customers** matching your query.`;
+        setMessages(prev => {
+          if (prev.some(m => m.content === queryMsg)) return prev;
+          return [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: queryMsg,
+            customerPreview: state.audience_preview || [],
+            customerCount: state.audience_count,
+          }];
+        });
       }
 
       setLoading(false);
     } else if (event.type === 'error') {
-      setMessages(prev => [...prev, {
-        id: `err-${Date.now()}`,
-        role: 'assistant',
-        content: `⚠️ ${event.data?.message || 'Something went wrong. Try again.'}`,
-      }]);
+      const errMsg = `⚠️ ${event.data?.message || 'Something went wrong. Try again.'}`;
+      setMessages(prev => {
+        if (prev.some(m => m.content === errMsg)) return prev;
+        return [...prev, {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: errMsg,
+        }];
+      });
       setLoading(false);
     }
-  }, [messages]);
+  }, []);
 
   // ── Send a brainstorm message ──
   const handleSend = async (text?: string) => {
