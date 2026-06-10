@@ -137,11 +137,18 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
     """Process a single graph stream event and push to SSE."""
     for node_name, node_output in event.items():
         if node_name == "__interrupt__":
-            # LangGraph interrupt — send to frontend
-            if isinstance(node_output, list) and node_output:
-                interrupt_data = node_output[0].value if hasattr(node_output[0], 'value') else node_output[0]
+            # LangGraph interrupt — extract the value as a plain dict
+            if isinstance(node_output, (list, tuple)) and node_output:
+                item = node_output[0]
+                interrupt_data = item.value if hasattr(item, 'value') else item
             else:
                 interrupt_data = node_output
+
+            # Ensure interrupt_data is a plain dict
+            if not isinstance(interrupt_data, dict):
+                interrupt_data = {"raw": str(interrupt_data)}
+            else:
+                interrupt_data = _serialize_state(interrupt_data)
 
             await push_event(conversation_id, "interrupt", interrupt_data)
             logger.info(f"Interrupt sent: {type(interrupt_data)}")
@@ -154,18 +161,27 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
 
 
 def _serialize_state(state: dict) -> dict:
-    """Serialize state for JSON transmission (handle UUIDs, datetimes, etc.)."""
-    result = {}
-    for key, value in state.items():
-        if isinstance(value, (str, int, float, bool, type(None))):
-            result[key] = value
-        elif isinstance(value, list):
-            result[key] = value[:10]  # Cap list size
-        elif isinstance(value, dict):
-            result[key] = value
-        else:
-            result[key] = str(value)
-    return result
+    """Serialize state for JSON transmission (handle UUIDs, datetimes, Decimals, etc.)."""
+    from decimal import Decimal
+    from uuid import UUID
+
+    def _convert(value):
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, UUID):
+            return str(value)
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {k: _convert(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_convert(v) for v in value[:20]]  # Cap list size
+        # Fallback for any unknown type (Interrupt, etc.)
+        return str(value)
+
+    return {k: _convert(v) for k, v in state.items()}
 
 
 # ── Endpoints ──
