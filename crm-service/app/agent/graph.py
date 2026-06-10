@@ -50,6 +50,9 @@ from app.agent import nodes
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton — must persist across fresh/resume calls
+_checkpointer = MemorySaver()
+
 
 def _route_after_intent(state: CampaignState) -> str:
     """Route based on parsed intent action."""
@@ -134,4 +137,4 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
     graph.add_conditional_edges("confirm_campaign", _route_after_confirm)
     graph.add_edge("execute_campaign", END)
 
-    return graph.compile(checkpointer=MemorySaver())
+    return graph.compile(checkpointer=_checkpointer)

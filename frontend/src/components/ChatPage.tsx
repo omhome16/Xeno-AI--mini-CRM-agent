@@ -11,8 +11,12 @@ interface Message {
   timestamp: Date;
 }
 
-export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatPageProps {
+  messages: Message[];
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+}
+
+export default function ChatPage({ messages, setMessages }: ChatPageProps) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'guided' | 'autopilot'>('guided');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -34,16 +38,16 @@ export default function ChatPage() {
       id: crypto.randomUUID(),
       timestamp: new Date(),
     }]);
-  }, []);
+  }, [setMessages]);
 
   const handleSSEEvent = useCallback((event: { type: string; data: unknown }) => {
     const d = event.data as Record<string, unknown>;
     switch (event.type) {
       case 'step_start':
-        addMessage({ type: 'step', content: d.message as string || d.step as string || 'Processing...' });
+        addMessage({ type: 'step', content: (d.message as string) || (d.step as string) || 'Processing...' });
         break;
       case 'step_complete':
-        addMessage({ type: 'agent', content: `✓ ${d.step as string || 'Step completed'}`, data: d.data });
+        addMessage({ type: 'agent', content: d.step as string || 'Step completed', data: d.data });
         break;
       case 'interrupt':
         setIsProcessing(false);
@@ -51,14 +55,14 @@ export default function ChatPage() {
         break;
       case 'result':
         setIsProcessing(false);
-        addMessage({ type: 'agent', content: '✅ Workflow complete!', data: d.state });
+        addMessage({ type: 'agent', content: 'Workflow complete', data: d.state });
         break;
       case 'error':
         setIsProcessing(false);
-        addMessage({ type: 'system', content: `⚠️ ${d.message as string || 'An error occurred'}` });
+        addMessage({ type: 'system', content: (d.message as string) || 'An error occurred' });
         break;
       case 'campaign_update':
-        addMessage({ type: 'agent', content: `📊 Campaign: ${d.sent || 0}/${d.total || 0} sent (${d.progress_pct || 0}%)`, data: d });
+        addMessage({ type: 'agent', content: `Campaign: ${d.sent || 0}/${d.total || 0} sent (${d.progress_pct || 0}%)`, data: d });
         break;
     }
   }, [addMessage]);
@@ -76,7 +80,7 @@ export default function ChatPage() {
       setEventSource(prev => { prev?.close(); return es; });
     } catch (err) {
       setIsProcessing(false);
-      addMessage({ type: 'system', content: `⚠️ Failed to connect: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      addMessage({ type: 'system', content: `Failed to connect: ${err instanceof Error ? err.message : 'Unknown error'}` });
     }
   };
 
@@ -85,9 +89,9 @@ export default function ChatPage() {
     setIsProcessing(true);
     addMessage({
       type: 'user',
-      content: response.action === 'approve' ? '✅ Approved' :
-               response.action === 'cancel' ? '❌ Cancelled' :
-               `✏️ ${response.action as string || 'Response sent'}`,
+      content: response.action === 'approve' ? 'Approved' :
+               response.action === 'cancel' ? 'Cancelled' :
+               `${response.action as string || 'Response sent'}`,
     });
     try {
       await resumeChat(conversationId, response);
@@ -95,7 +99,7 @@ export default function ChatPage() {
       setEventSource(prev => { prev?.close(); return es; });
     } catch (err) {
       setIsProcessing(false);
-      addMessage({ type: 'system', content: `⚠️ Resume failed: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      addMessage({ type: 'system', content: `Resume failed: ${err instanceof Error ? err.message : 'Unknown error'}` });
     }
   };
 

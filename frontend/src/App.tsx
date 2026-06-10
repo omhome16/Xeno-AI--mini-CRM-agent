@@ -6,7 +6,15 @@ import './App.css';
 
 type Page = 'chat' | 'dashboard';
 
-/* Minimal geometric spark logo — SVG */
+interface ChatMessage {
+  id: string;
+  type: 'user' | 'agent' | 'system' | 'interrupt' | 'step';
+  content: string;
+  data?: unknown;
+  timestamp: Date;
+}
+
+/* Minimal geometric spark logo */
 function LogoMark() {
   return (
     <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -32,6 +40,8 @@ function LogoMark() {
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>('chat');
+  // Lift chat messages to App level so they persist across tab switches
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   return (
     <div className="app-layout">
@@ -67,7 +77,7 @@ export default function App() {
         <div className="sidebar-footer">
           <div className="sidebar-footer-card">
             <div className="footer-label">Orchestration Engine</div>
-            <div className="footer-sub">Dual LLM · LangGraph</div>
+            <div className="footer-sub">Dual LLM &middot; LangGraph</div>
             <div className="footer-badges">
               <span className="badge badge-completed">Gemini</span>
               <span className="badge badge-sending">Groq</span>
@@ -82,14 +92,19 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'baseline' }}>
             <h2>{activePage === 'chat' ? 'AI Campaign Agent' : 'Campaign Dashboard'}</h2>
             <span className="header-subtitle">
-              {activePage === 'chat' ? 'Natural language → campaigns' : 'Analytics & performance'}
+              {activePage === 'chat' ? 'Natural language \u2192 campaigns' : 'Analytics & performance'}
             </span>
           </div>
         </header>
 
         <div className="page-body">
-          {activePage === 'chat' && <ChatPage />}
-          {activePage === 'dashboard' && <DashboardPage />}
+          {/* Use display:none to keep both mounted but hidden, preserving state */}
+          <div style={{ display: activePage === 'chat' ? 'contents' : 'none' }}>
+            <ChatPage messages={chatMessages} setMessages={setChatMessages} />
+          </div>
+          <div style={{ display: activePage === 'dashboard' ? 'contents' : 'none' }}>
+            <DashboardPage />
+          </div>
         </div>
       </main>
     </div>

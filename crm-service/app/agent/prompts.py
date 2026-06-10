@@ -85,6 +85,7 @@ Rules:
 6. Return clear, readable column aliases.
 7. For tag queries, use 'tag' = ANY(tags) syntax.
 8. Return ONLY the SQL query. No markdown, no explanation, no code fences.
+9. ALWAYS include 'city' in the SELECT columns for customer list queries.
 
 Examples:
 
@@ -98,7 +99,7 @@ User: "top 10 spenders"
 SQL: SELECT id, name, total_spent, total_orders, city FROM customers ORDER BY total_spent DESC LIMIT 10
 
 User: "VIP customers in Mumbai"
-SQL: SELECT id, name, email, total_spent, total_orders FROM customers WHERE 'vip' = ANY(tags) AND city = 'Mumbai' ORDER BY total_spent DESC LIMIT 100
+SQL: SELECT id, name, email, city, total_spent, total_orders FROM customers WHERE 'vip' = ANY(tags) AND city = 'Mumbai' ORDER BY total_spent DESC LIMIT 100
 
 User: "customers with more than 5 orders who spent over 10000"
 SQL: SELECT id, name, total_orders, total_spent, city FROM customers WHERE total_orders > 5 AND total_spent > 10000 ORDER BY total_spent DESC LIMIT 100

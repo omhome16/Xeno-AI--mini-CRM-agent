@@ -73,7 +73,15 @@ async def build_segment(state: CampaignState, llm_client: DualLLMClient) -> dict
     Input: state.audience_description
     Output: audience_sql, audience_count, audience_preview, segment_id, segment_name
     """
+    from app.sse.manager import push_event
+
+    conv_id = state.get("conversation_id", "")
     logger.info(f"Building segment for: {state.get('audience_description', '')[:100]}")
+
+    await push_event(conv_id, "step_start", {
+        "step": "Generating SQL query",
+        "message": f"Translating \"{state.get('audience_description', '')[:80]}\" to SQL...",
+    })
 
     # Query customers via AI SQL
     query_result = await agent_tools.query_customers(
@@ -86,11 +94,22 @@ async def build_segment(state: CampaignState, llm_client: DualLLMClient) -> dict
             "current_step": "segment_error",
         }
 
+    # Push SQL thinking to frontend
+    await push_event(conv_id, "step_start", {
+        "step": "SQL executed",
+        "message": f"Query: {query_result.get('sql', '')[:120]}",
+    })
+
     if query_result["count"] == 0:
         return {
             "error": "No customers match this criteria. Try a broader description.",
             "current_step": "segment_error",
         }
+
+    await push_event(conv_id, "step_start", {
+        "step": f"Found {query_result['count']} customers",
+        "message": f"Building segment with {query_result['count']} matching customers...",
+    })
 
     # Create and save segment
     segment_result = await agent_tools.create_segment(
@@ -114,10 +133,14 @@ async def review_segment(state: CampaignState) -> dict:
     """
     Interrupt for human review of the segment (guided mode only).
 
-    The frontend will display the segment details (count, preview,
-    criteria) and allow the user to approve, edit, or reject.
+    For query_customers, skip the interrupt — just show results and end.
     """
+    action = state.get("action", "general_chat")
     mode = state.get("mode", "guided")
+
+    # For pure queries, no approval needed — just pass through
+    if action == "query_customers":
+        return {"current_step": "segment_approved"}
 
     if mode == "guided":
         # Interrupt — execution pauses here until the user responds
@@ -126,6 +149,7 @@ async def review_segment(state: CampaignState) -> dict:
             "segment_name": state.get("segment_name", ""),
             "audience_count": state.get("audience_count", 0),
             "audience_preview": state.get("audience_preview", []),
+            "audience_sql": state.get("audience_sql", ""),
             "filter_criteria": state.get("filter_criteria", {}),
             "message": f"Found {state.get('audience_count', 0)} customers matching your criteria. Review the segment?",
         })
