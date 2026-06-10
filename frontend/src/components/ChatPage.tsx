@@ -46,17 +46,43 @@ export default function ChatPage({ messages, setMessages }: ChatPageProps) {
       case 'step_start':
         addMessage({ type: 'step', content: (d.message as string) || (d.step as string) || 'Processing...' });
         break;
-      case 'step_complete':
-        addMessage({ type: 'agent', content: d.step as string || 'Step completed', data: d.data });
+      case 'step_complete': {
+        // Show node completions as subtle step indicators, not agent bubbles
+        const stepName = (d.step as string) || '';
+        // Map raw node names to human-readable labels
+        const labels: Record<string, string> = {
+          parse_intent: 'Intent parsed',
+          build_segment: 'Segment built',
+          review_segment: 'Segment reviewed',
+          draft_message: 'Message drafted',
+          review_message: 'Message reviewed',
+          confirm_campaign: 'Campaign confirmed',
+          execute_campaign: 'Campaign executed',
+        };
+        addMessage({ type: 'step', content: labels[stepName] || stepName || 'Step completed' });
         break;
+      }
       case 'interrupt':
         setIsProcessing(false);
         addMessage({ type: 'interrupt', content: '', data: d });
         break;
-      case 'result':
+      case 'result': {
         setIsProcessing(false);
-        addMessage({ type: 'agent', content: 'Workflow complete', data: d.state });
+        // Build a human-readable summary from the state
+        const state = (d.state || d) as Record<string, unknown>;
+        let summary = '';
+        if (state.audience_count) {
+          summary = `Found ${state.audience_count} customers`;
+          if (state.segment_name) summary += ` in segment "${state.segment_name}"`;
+          summary += '.';
+        } else if (state.campaign_id) {
+          summary = `Campaign created successfully. ${state.communications_created || 0} messages queued for delivery.`;
+        } else {
+          summary = 'Done.';
+        }
+        addMessage({ type: 'agent', content: summary, data: state });
         break;
+      }
       case 'error':
         setIsProcessing(false);
         addMessage({ type: 'system', content: (d.message as string) || 'An error occurred' });

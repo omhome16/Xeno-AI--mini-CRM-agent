@@ -24,20 +24,30 @@ export async function resumeChat(conversationId: string, response: Record<string
 
 export function connectSSE(conversationId: string, onEvent: (event: { type: string; data: unknown }) => void): EventSource {
   const es = new EventSource(`${API_BASE}/api/chat/stream/${conversationId}`);
+  let done = false;
 
   const eventTypes = ['step_start', 'step_complete', 'interrupt', 'result', 'error', 'campaign_update', 'heartbeat'];
   eventTypes.forEach(type => {
     es.addEventListener(type, (e: MessageEvent) => {
       try {
-        onEvent({ type, data: JSON.parse(e.data) });
+        const parsed = JSON.parse(e.data);
+        if (type === 'result' || type === 'error') done = true;
+        onEvent({ type, data: parsed });
       } catch {
         onEvent({ type, data: e.data });
+      }
+      // Close after terminal events
+      if (type === 'result' || type === 'error') {
+        es.close();
       }
     });
   });
 
   es.onerror = () => {
-    onEvent({ type: 'error', data: { message: 'Connection lost' } });
+    if (!done) {
+      onEvent({ type: 'error', data: { message: 'Connection lost' } });
+    }
+    es.close();
   };
 
   return es;
