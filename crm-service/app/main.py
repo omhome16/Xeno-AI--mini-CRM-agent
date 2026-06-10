@@ -60,11 +60,22 @@ async def lifespan(app: FastAPI):
         await init_readonly_db(settings.DATABASE_URL)
         logger.info("✓ Read-only database pool ready")
 
-        # 3. Schema migrations will be added in Phase 3
-        # await run_migrations(pool)
+        # 3. Schema migration (each statement executed individually — asyncpg requirement)
+        from app.schema import SCHEMA_STATEMENTS
+        async with pool.acquire() as conn:
+            for stmt in SCHEMA_STATEMENTS:
+                await conn.execute(stmt)
+        logger.info("✓ Database schema migrated")
 
-        # 4. Seed data will be added in Phase 3
-        # await seed_if_empty(pool)
+        # 4. Seed demo data if database is empty
+        async with pool.acquire() as conn:
+            count = await conn.fetchval("SELECT COUNT(*) FROM customers")
+        if count == 0:
+            from app.seed.seeder import seed_demo_data
+            summary = await seed_demo_data(pool)
+            logger.info(f"✓ Seeded demo data: {summary}")
+        else:
+            logger.info(f"✓ Database already has {count} customers — skipping seed")
 
         # 5. Redis will be added in Phase 7
         # app.state.redis = Redis.from_url(settings.REDIS_URL)
