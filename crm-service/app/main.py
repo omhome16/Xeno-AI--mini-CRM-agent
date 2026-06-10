@@ -145,8 +145,16 @@ async def root():
 
 
 # ── Register Routers ──
-# Routers will be added as we build each phase:
-# Phase 4: customer_router, order_router
-# Phase 5: receipt_router
+from app.routers.customer_router import router as customer_router
+from app.routers.order_router import router as order_router
+from app.routers.receipt_router import router as receipt_router
+from app.routers.campaign_router import router as campaign_router
+
+app.include_router(customer_router)
+app.include_router(order_router)
+app.include_router(receipt_router)
+app.include_router(campaign_router)
+
+# Future routers (added in later phases):
 # Phase 8: chat_router
-# Phase 9: campaign_router, analytics_router
+# Phase 9: analytics_router
