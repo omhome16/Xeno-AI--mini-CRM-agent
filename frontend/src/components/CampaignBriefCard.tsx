@@ -7,18 +7,11 @@ interface Props {
   onPlanClick: () => void;
 }
 
-const channelEmoji: Record<string, string> = {
-  whatsapp: '💬',
-  sms: '📱',
-  email: '📧',
-  rcs: '🎨',
-};
-
 export default function CampaignBriefCard({ brief, readyToPlan, onPlanClick }: Props) {
   const fields = [
     { key: 'goal', label: 'Goal', icon: <Sparkles size={14} />, value: brief.goal },
     { key: 'audience', label: 'Audience', icon: <Target size={14} />, value: brief.audience },
-    { key: 'channel', label: 'Channel', icon: <Radio size={14} />, value: brief.channel ? `${channelEmoji[brief.channel] || '📡'} ${brief.channel.toUpperCase()}` : undefined },
+    { key: 'channel', label: 'Channel', icon: <Radio size={14} />, value: brief.channel ? brief.channel.toUpperCase() : undefined },
     { key: 'message_idea', label: 'Message', icon: <MessageSquare size={14} />, value: brief.message_idea },
     { key: 'offer', label: 'Offer', icon: <Gift size={14} />, value: brief.offer },
   ];

@@ -33,7 +33,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 'welcome',
     role: 'assistant',
-    content: "Hi! I'm your AI Campaign Strategist. Tell me about the campaign you want to create — who do you want to reach, what do you want to say, and how? Let's brainstorm together! 🚀",
+    content: "Hi! I'm your AI Campaign Strategist. Tell me about the campaign you want to create — who do you want to reach, what do you want to say, and how? Let's brainstorm together!",
     suggestions: [
       { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
       { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },
@@ -121,7 +121,7 @@ export default function ChatPage() {
       } else if (step === 'build_segment' && data) {
         // Query result
         if (data.error) {
-          const errMsg = `❌ ${data.error}`;
+          const errMsg = `Error: ${data.error}`;
           setMessages(prev => {
             if (prev.some(m => m.content === errMsg)) return prev;
             return [...prev, {
@@ -183,7 +183,7 @@ export default function ChatPage() {
 
       setLoading(false);
     } else if (event.type === 'error') {
-      const errMsg = `⚠️ ${event.data?.message || 'Something went wrong. Try again.'}`;
+      const errMsg = `Warning: ${event.data?.message || 'Something went wrong. Try again.'}`;
       setMessages(prev => {
         if (prev.some(m => m.content === errMsg)) return prev;
         return [...prev, {
@@ -216,7 +216,7 @@ export default function ChatPage() {
       setMessages(prev => [...prev, {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        content: '⚠️ Failed to connect to the AI agent. Is the backend running?',
+        content: 'Warning: Failed to connect to the AI agent. Is the backend running?',
       }]);
       setLoading(false);
     }
@@ -252,7 +252,7 @@ export default function ChatPage() {
             setMessages(prev => [...prev, {
               id: `err-${Date.now()}`,
               role: 'assistant',
-              content: '⚠️ Could not build a plan. Try refining your audience description.',
+              content: 'Warning: Could not build a plan. Try refining your audience description.',
             }]);
             setPhase('brainstorm');
           }
@@ -261,7 +261,7 @@ export default function ChatPage() {
           setMessages(prev => [...prev, {
             id: `err-${Date.now()}`,
             role: 'assistant',
-            content: `⚠️ ${event.data?.message || 'Planning failed. Try again.'}`,
+            content: `Warning: ${event.data?.message || 'Planning failed. Try again.'}`,
           }]);
           setPhase('brainstorm');
           setLoading(false);
@@ -378,7 +378,7 @@ export default function ChatPage() {
     setMessages([{
       id: 'welcome-new',
       role: 'assistant',
-      content: "Ready for another campaign! What are you thinking? 🚀",
+      content: "Ready for another campaign! What are you thinking?",
       suggestions: [
         { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
         { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },

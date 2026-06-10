@@ -1,4 +1,5 @@
 import type { Suggestion } from '../api';
+import { Users, Radio, Tag, MessageSquare, Zap, HelpCircle } from 'lucide-react';
 
 interface Props {
   suggestions: Suggestion[];
@@ -13,12 +14,22 @@ const categoryColors: Record<string, string> = {
   action: '#ec4899',
 };
 
-const categoryIcons: Record<string, string> = {
-  audience: '👥',
-  channel: '📡',
-  offer: '🏷️',
-  message: '✉️',
-  action: '⚡',
+const getCategoryIcon = (category: string) => {
+  const size = 13;
+  switch (category) {
+    case 'audience':
+      return <Users size={size} />;
+    case 'channel':
+      return <Radio size={size} />;
+    case 'offer':
+      return <Tag size={size} />;
+    case 'message':
+      return <MessageSquare size={size} />;
+    case 'action':
+      return <Zap size={size} />;
+    default:
+      return <HelpCircle size={size} />;
+  }
 };
 
 export default function SuggestionChips({ suggestions, onSelect }: Props) {
@@ -35,7 +46,9 @@ export default function SuggestionChips({ suggestions, onSelect }: Props) {
           } as React.CSSProperties}
           onClick={() => onSelect(s)}
         >
-          <span className="chip-icon">{categoryIcons[s.category] || '💡'}</span>
+          <span className="chip-icon" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+            {getCategoryIcon(s.category)}
+          </span>
           <span className="chip-label">{s.label}</span>
         </button>
       ))}

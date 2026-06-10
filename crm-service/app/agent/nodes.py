@@ -22,7 +22,8 @@ from app.agent.state import CampaignState
 from app.agent.llm import DualLLMClient
 from app.agent.prompts import (
     INTENT_PARSING_PROMPT,
-    BRAINSTORM_PROMPT,
+    BRAINSTORM_PLANNING_PROMPT,
+    BRAINSTORM_RESPONSE_PROMPT,
     GENERAL_RESPONSE_PROMPT,
 )
 from app.agent import tools as agent_tools
@@ -47,6 +48,45 @@ def _parse_json_response(text: str) -> dict:
                 pass
         logger.warning(f"Failed to parse JSON: {text[:200]}")
         return {}
+
+
+async def _execute_brainstorm_query(sql: str) -> str:
+    """Execute a read-only query safely for brainstorming context."""
+    from app.services.sql_guard import SQLGuard, SQLGuardError
+    from app.database import get_readonly_pool
+    
+    sql = sql.strip()
+    if sql.startswith("```"):
+        sql = sql.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    sql = sql.rstrip(";")
+    
+    guard = SQLGuard()
+    try:
+        safe_sql = guard.validate_and_prepare(sql)
+    except SQLGuardError as e:
+        logger.warning(f"Brainstorm query rejected by SQLGuard: {e}")
+        return f"Query rejected: {e}"
+        
+    readonly_pool = get_readonly_pool()
+    try:
+        async with readonly_pool.acquire() as conn:
+            await conn.execute("SET statement_timeout = '3000'")
+            rows = await conn.fetch(safe_sql)
+            results = []
+            for r in rows[:15]:  # Limit to 15 items for context
+                record = {}
+                for k, v in dict(r).items():
+                    if hasattr(v, 'isoformat'):
+                        record[k] = v.isoformat()
+                    elif isinstance(v, (int, float, str, bool)) or v is None:
+                        record[k] = v
+                    else:
+                        record[k] = str(v)
+                results.append(record)
+            return json.dumps(results, indent=2)
+    except Exception as e:
+        logger.warning(f"Brainstorm query execution failed: {e}")
+        return f"Execution error: {e}"
 
 
 async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
@@ -114,6 +154,7 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
 async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
     Generate a conversational brainstorm response with structured suggestions.
+    Uses a ReAct loop to query the database for real-time stats if needed.
 
     Input: state.user_message, state.brief, state.messages
     Output: ai_response, suggestions, brief_updates, ready_to_plan
@@ -122,8 +163,8 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
     conv_id = state.get("conversation_id", "")
 
     await push_event(conv_id, "step_start", {
-        "step": "Thinking",
-        "message": "Brainstorming campaign ideas...",
+        "step": "Analyzing",
+        "message": "Analyzing brief and conversation history...",
     })
 
     # Merge any brief_updates from intent parsing into brief
@@ -136,8 +177,6 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
 
     # Format brief for prompt
     brief_text = json.dumps(brief, indent=2) if brief else "Empty — no decisions made yet"
-
-    prompt = BRAINSTORM_PROMPT.replace("{brief}", brief_text)
 
     # Build conversation context
     history = state.get("messages", [])
@@ -156,15 +195,44 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
             + f"\n\nLatest message from marketer: {state['user_message']}"
         )
 
-    result = await llm_client.reason(
-        system_prompt=prompt,
+    # Step 1: Call LLM to see if it wants to query the database
+    planning_prompt = BRAINSTORM_PLANNING_PROMPT.replace("{brief}", brief_text)
+    planning_result = await llm_client.reason(
+        system_prompt=planning_prompt,
+        user_input=user_input,
+    )
+    
+    plan = _parse_json_response(planning_result)
+    sql_query = plan.get("sql_query")
+    query_results = None
+
+    if sql_query:
+        await push_event(conv_id, "step_start", {
+            "step": "Database Query",
+            "message": f"Querying database: {sql_query[:60]}...",
+        })
+        query_results = await _execute_brainstorm_query(sql_query)
+        logger.info(f"Brainstorm query: {sql_query} | Results: {query_results[:200]}")
+
+    # Step 2: Generate final response
+    await push_event(conv_id, "step_start", {
+        "step": "Thinking",
+        "message": "Formulating campaign recommendations...",
+    })
+    
+    response_prompt = BRAINSTORM_RESPONSE_PROMPT.replace("{brief}", brief_text)
+    response_prompt = response_prompt.replace("{sql_query}", sql_query or "None")
+    response_prompt = response_prompt.replace("{query_results}", query_results or "No query run")
+
+    final_result = await llm_client.reason(
+        system_prompt=response_prompt,
         user_input=user_input,
     )
 
-    parsed = _parse_json_response(result)
+    parsed = _parse_json_response(final_result)
 
     # Extract structured data
-    ai_response = parsed.get("response", result if not parsed else "Let me help you plan a campaign!")
+    ai_response = parsed.get("response", final_result if not parsed else "Let me help you plan a campaign!")
     suggestions = parsed.get("suggestions", [])
     new_brief_updates = parsed.get("brief_updates", {})
     ready_to_plan = parsed.get("ready_to_plan", False)
@@ -336,6 +404,14 @@ async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> d
             "error": result["error"],
             "current_step": "campaign_error",
         }
+
+    # Start dispatch in the background
+    from app.workers.campaign_worker import dispatch_campaign
+    import asyncio
+    asyncio.create_task(
+        dispatch_campaign(result["campaign_id"], conversation_id=conv_id),
+        name=f"dispatch-{result['campaign_id'][:8]}",
+    )
 
     return {
         "campaign_id": result["campaign_id"],

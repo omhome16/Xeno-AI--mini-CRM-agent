@@ -1,4 +1,4 @@
-import { Users, MessageSquare, Radio, Database, ChevronDown, ChevronUp, Rocket, ArrowLeft } from 'lucide-react';
+import { Users, MessageSquare, Radio, Database, ChevronDown, ChevronUp, Rocket, ArrowLeft, ClipboardList } from 'lucide-react';
 import { useState } from 'react';
 import CustomerPreviewTable from './CustomerPreviewTable';
 
@@ -33,7 +33,10 @@ export default function CampaignPlanCard({
   return (
     <div className="campaign-plan-card glass">
       <div className="plan-header">
-        <h3 className="plan-title">📋 Campaign Plan</h3>
+        <h3 className="plan-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ClipboardList size={18} />
+          <span>Campaign Plan</span>
+        </h3>
         <p className="plan-subtitle">Review everything before launching</p>
       </div>
 

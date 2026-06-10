@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, Loader, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle, XCircle, Loader, ChevronDown, ChevronUp, Cpu, Trophy } from 'lucide-react';
 import { useState } from 'react';
 
 export interface TrailStep {
@@ -27,7 +27,10 @@ export default function ExecutionTrail({ steps, campaignResult, error, onDone }:
   return (
     <div className="execution-trail glass">
       <div className="trail-header">
-        <h3 className="trail-title">🚀 Campaign Execution</h3>
+        <h3 className="trail-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Cpu size={18} />
+          <span>Campaign Execution</span>
+        </h3>
         <p className="trail-subtitle">Running end-to-end — no interruptions</p>
       </div>
 
@@ -71,7 +74,9 @@ export default function ExecutionTrail({ steps, campaignResult, error, onDone }:
 
       {campaignResult && (
         <div className="trail-success">
-          <div className="trail-success-icon">🎉</div>
+          <div className="trail-success-icon" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Trophy size={32} color="#f59e0b" />
+          </div>
           <h4>Campaign Launched!</h4>
           <div className="trail-success-stats">
             <div className="trail-stat">

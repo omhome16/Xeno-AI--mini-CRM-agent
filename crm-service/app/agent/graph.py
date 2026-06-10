@@ -74,6 +74,13 @@ def _route_after_segment(state: CampaignState) -> str:
     return "draft_message"
 
 
+def _route_after_draft(state: CampaignState) -> str:
+    """Route based on whether we are in planning mode or execution mode."""
+    if state.get("mode") == "plan":
+        return END
+    return "execute_campaign"
+
+
 def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
     """
     Build the LangGraph campaign workflow.
@@ -100,7 +107,7 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
     graph.add_edge("respond_brainstorm", END)
     graph.add_edge("respond_general", END)
     graph.add_conditional_edges("build_segment", _route_after_segment)
-    graph.add_edge("draft_message", "execute_campaign")
+    graph.add_conditional_edges("draft_message", _route_after_draft)
     graph.add_edge("execute_campaign", END)
 
     return graph.compile(checkpointer=_checkpointer)
