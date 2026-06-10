@@ -1,0 +1,141 @@
+"""
+Xeno AI CRM Service — Main Application Entry Point.
+
+This is the core CRM backend that handles:
+  - Customer and order data ingestion
+  - AI agent chat interface (LangGraph + Gemini/Groq)
+  - Campaign management and execution
+  - Delivery receipt processing (idempotent callbacks)
+  - Real-time analytics via SSE
+
+Architecture:
+  Routers → Services → Repositories → Database
+  Each layer has a single responsibility and can be tested independently.
+"""
+
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import get_settings
+from app.database import init_db, init_readonly_db, close_db
+
+# ── Configure Logging ──
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+
+# ── Application Lifespan ──
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manage application startup and shutdown.
+
+    Startup:
+      1. Initialize database connection pools (main + read-only)
+      2. Run schema migrations (CREATE IF NOT EXISTS)
+      3. Seed demo data if database is empty
+      4. Initialize Redis connection
+
+    Shutdown:
+      1. Close database pools
+      2. Close Redis connection
+    """
+    settings = get_settings()
+    logger.info(f"Starting {settings.APP_NAME}...")
+
+    # ── Startup ──
+    try:
+        # 1. Database pools
+        pool = await init_db(settings.DATABASE_URL)
+        logger.info("✓ Main database pool ready")
+
+        # 2. Read-only pool for AI queries (non-critical, may fail on first run)
+        await init_readonly_db(settings.DATABASE_URL)
+        logger.info("✓ Read-only database pool ready")
+
+        # 3. Schema migrations will be added in Phase 3
+        # await run_migrations(pool)
+
+        # 4. Seed data will be added in Phase 3
+        # await seed_if_empty(pool)
+
+        # 5. Redis will be added in Phase 7
+        # app.state.redis = Redis.from_url(settings.REDIS_URL)
+
+        logger.info(f"✓ {settings.APP_NAME} started successfully")
+
+    except Exception as e:
+        logger.error(f"✗ Startup failed: {e}")
+        raise
+
+    yield  # ← Application runs here
+
+    # ── Shutdown ──
+    logger.info(f"Shutting down {settings.APP_NAME}...")
+    await close_db()
+    logger.info("✓ Shutdown complete")
+
+
+# ── Create FastAPI Application ──
+settings = get_settings()
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="AI-native Mini CRM for intelligent customer engagement",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# ── CORS Middleware ──
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        settings.FRONTEND_URL,
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:3000",  # Fallback
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Health Check ──
+@app.get("/health", tags=["System"])
+async def health_check():
+    """
+    Health check endpoint for deployment monitoring.
+    Returns service status and version info.
+    """
+    return {
+        "status": "healthy",
+        "service": "crm-service",
+        "version": "0.1.0",
+    }
+
+
+# ── API Root ──
+@app.get("/", tags=["System"])
+async def root():
+    """API root — service information."""
+    return {
+        "service": settings.APP_NAME,
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
+# ── Register Routers ──
+# Routers will be added as we build each phase:
+# Phase 4: customer_router, order_router
+# Phase 5: receipt_router
+# Phase 8: chat_router
+# Phase 9: campaign_router, analytics_router
