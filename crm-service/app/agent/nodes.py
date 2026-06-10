@@ -5,11 +5,11 @@ Each node receives the CampaignState, performs work, and returns
 state updates. Nodes that need human review use LangGraph's
 interrupt() to pause execution.
 
-Workflow:
-  parse_intent → build_segment → [review_segment] → draft_message → [review_message] → [confirm_send] → execute
-  
-  In guided mode: 3 interrupts (segment, message, confirmation)
-  In autopilot mode: 1 interrupt (confirmation only)
+Workflow (Campaign Studio):
+  Brainstorm:  parse_intent → respond_brainstorm → END
+  Query:       parse_intent → build_segment → END
+  General:     parse_intent → respond_general → END
+  Execute:     parse_intent → build_segment → draft_message → execute_campaign → END
 """
 
 import json
@@ -20,10 +20,26 @@ from langgraph.types import interrupt
 
 from app.agent.state import CampaignState
 from app.agent.llm import DualLLMClient
-from app.agent.prompts import INTENT_PARSING_PROMPT
+from app.agent.prompts import (
+    INTENT_PARSING_PROMPT,
+    BRAINSTORM_PROMPT,
+    GENERAL_RESPONSE_PROMPT,
+)
 from app.agent import tools as agent_tools
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_json_response(text: str) -> dict:
+    """Parse a JSON response from an LLM, handling code fences."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning(f"Failed to parse JSON: {text[:200]}")
+        return {}
 
 
 async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
@@ -31,7 +47,7 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
     Parse the user's natural language message into structured intent.
 
     Input: state.user_message, state.messages (conversation history)
-    Output: action, audience_description, message_description, channel, offer_details
+    Output: action, audience_description, message_description, channel, offer_details, brief_updates
     """
     logger.info(f"Parsing intent: {state['user_message'][:100]}...")
 
@@ -44,42 +60,142 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
         if content:
             context_parts.append(f"{role}: {content}")
 
+    # Include current brief context
+    brief = state.get("brief", {})
+    brief_context = ""
+    if brief:
+        brief_context = f"\n\nCurrent campaign brief: {json.dumps(brief)}"
+
     user_input = state["user_message"]
     if context_parts:
         user_input = (
             "Previous conversation:\n"
             + "\n".join(context_parts)
+            + brief_context
             + f"\n\nCurrent message: {state['user_message']}"
         )
+    elif brief_context:
+        user_input = brief_context + f"\n\nCurrent message: {state['user_message']}"
 
     result = await llm_client.reason(
         system_prompt=INTENT_PARSING_PROMPT,
         user_input=user_input,
     )
 
-    # Parse JSON response
-    try:
-        text = result.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        intent = json.loads(text)
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse intent JSON: {result[:200]}")
+    intent = _parse_json_response(result)
+    if not intent:
         intent = {
             "action": "general_chat",
             "audience_description": None,
             "message_description": None,
-            "channel": "whatsapp",
+            "channel": None,
             "offer_details": None,
+            "brief_updates": {},
         }
 
     return {
         "action": intent.get("action", "general_chat"),
         "audience_description": intent.get("audience_description", ""),
         "message_description": intent.get("message_description", ""),
-        "channel": intent.get("channel", "whatsapp") or "whatsapp",
+        "channel": intent.get("channel", "") or "",
         "offer_details": intent.get("offer_details", ""),
+        "brief_updates": intent.get("brief_updates", {}),
         "current_step": "intent_parsed",
+    }
+
+
+async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) -> dict:
+    """
+    Generate a conversational brainstorm response with structured suggestions.
+
+    Input: state.user_message, state.brief, state.messages
+    Output: ai_response, suggestions, brief_updates, ready_to_plan
+    """
+    from app.sse.manager import push_event
+    conv_id = state.get("conversation_id", "")
+
+    await push_event(conv_id, "step_start", {
+        "step": "Thinking",
+        "message": "Brainstorming campaign ideas...",
+    })
+
+    # Merge any brief_updates from intent parsing into brief
+    brief = dict(state.get("brief", {}))
+    updates_from_intent = state.get("brief_updates", {})
+    if updates_from_intent:
+        for k, v in updates_from_intent.items():
+            if v:
+                brief[k] = v
+
+    # Format brief for prompt
+    brief_text = json.dumps(brief, indent=2) if brief else "Empty — no decisions made yet"
+
+    prompt = BRAINSTORM_PROMPT.replace("{brief}", brief_text)
+
+    # Build conversation context
+    history = state.get("messages", [])
+    context_parts = []
+    for msg in history[-8:]:
+        role = msg.get("role", msg.get("type", "user"))
+        content = msg.get("content", "")
+        if content:
+            context_parts.append(f"{role}: {content}")
+
+    user_input = state["user_message"]
+    if context_parts:
+        user_input = (
+            "Conversation so far:\n"
+            + "\n".join(context_parts)
+            + f"\n\nLatest message from marketer: {state['user_message']}"
+        )
+
+    result = await llm_client.reason(
+        system_prompt=prompt,
+        user_input=user_input,
+    )
+
+    parsed = _parse_json_response(result)
+
+    # Extract structured data
+    ai_response = parsed.get("response", result if not parsed else "Let me help you plan a campaign!")
+    suggestions = parsed.get("suggestions", [])
+    new_brief_updates = parsed.get("brief_updates", {})
+    ready_to_plan = parsed.get("ready_to_plan", False)
+
+    # Merge new updates into brief
+    if new_brief_updates:
+        for k, v in new_brief_updates.items():
+            if v:
+                brief[k] = v
+
+    return {
+        "ai_response": ai_response,
+        "suggestions": suggestions,
+        "brief": brief,
+        "brief_updates": new_brief_updates,
+        "ready_to_plan": ready_to_plan,
+        "current_step": "brainstorm_responded",
+    }
+
+
+async def respond_general(state: CampaignState, llm_client: DualLLMClient) -> dict:
+    """
+    Generate a response for general chat or analytics questions.
+
+    Input: state.user_message
+    Output: ai_response
+    """
+    result = await llm_client.generate(
+        system_prompt=GENERAL_RESPONSE_PROMPT,
+        user_input=state["user_message"],
+    )
+
+    parsed = _parse_json_response(result)
+    ai_response = parsed.get("response", result if not parsed else "I'm here to help with your CRM campaigns!")
+
+    return {
+        "ai_response": ai_response,
+        "current_step": "general_responded",
     }
 
 
@@ -146,42 +262,6 @@ async def build_segment(state: CampaignState, llm_client: DualLLMClient) -> dict
     }
 
 
-async def review_segment(state: CampaignState) -> dict:
-    """
-    Interrupt for human review of the segment (guided mode only).
-
-    For query_customers, skip the interrupt — just show results and end.
-    """
-    action = state.get("action", "general_chat")
-    mode = state.get("mode", "guided")
-
-    # For pure queries, no approval needed — just pass through
-    if action == "query_customers":
-        return {"current_step": "segment_approved"}
-
-    if mode == "guided":
-        # Interrupt — execution pauses here until the user responds
-        user_response = interrupt({
-            "type": "segment_review",
-            "segment_name": state.get("segment_name", ""),
-            "audience_count": state.get("audience_count", 0),
-            "audience_preview": state.get("audience_preview", []),
-            "audience_sql": state.get("audience_sql", ""),
-            "filter_criteria": state.get("filter_criteria", {}),
-            "message": f"Found {state.get('audience_count', 0)} customers matching your criteria. Review the segment?",
-        })
-
-        # User can approve or provide edits
-        if isinstance(user_response, dict) and user_response.get("action") == "edit":
-            # User wants to change the audience — restart segment building
-            return {
-                "audience_description": user_response.get("new_description", state["audience_description"]),
-                "current_step": "segment_edited",
-            }
-
-    return {"current_step": "segment_approved"}
-
-
 async def draft_message(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
     Generate a channel-appropriate marketing message.
@@ -189,11 +269,20 @@ async def draft_message(state: CampaignState, llm_client: DualLLMClient) -> dict
     Input: state.channel, state.audience_description, state.message_description
     Output: message_template, message_char_count
     """
-    logger.info(f"Drafting {state.get('channel', 'whatsapp')} message...")
+    from app.sse.manager import push_event
+    conv_id = state.get("conversation_id", "")
+
+    channel = state.get("channel", "whatsapp") or "whatsapp"
+    logger.info(f"Drafting {channel} message...")
+
+    await push_event(conv_id, "step_start", {
+        "step": f"Drafting {channel.upper()} message",
+        "message": f"Generating personalized message for {state.get('audience_description', 'target audience')[:60]}...",
+    })
 
     result = await agent_tools.generate_message(
         llm_client=llm_client,
-        channel=state.get("channel", "whatsapp"),
+        channel=channel,
         audience_description=state.get("audience_description", ""),
         message_description=state.get("message_description", ""),
         offer_details=state.get("offer_details", ""),
@@ -206,70 +295,6 @@ async def draft_message(state: CampaignState, llm_client: DualLLMClient) -> dict
     }
 
 
-async def review_message(state: CampaignState) -> dict:
-    """
-    Interrupt for human review of the drafted message (guided mode only).
-
-    The frontend displays the message with edit capabilities:
-      - Direct text editing
-      - AI-assisted suggestions
-    """
-    mode = state.get("mode", "guided")
-
-    if mode == "guided":
-        user_response = interrupt({
-            "type": "message_review",
-            "message_template": state.get("message_template", ""),
-            "channel": state.get("channel", "whatsapp"),
-            "char_count": state.get("message_char_count", 0),
-            "message": "Here's the drafted message. You can approve, edit, or request a rewrite.",
-        })
-
-        if isinstance(user_response, dict):
-            if user_response.get("action") == "edit":
-                return {
-                    "message_template": user_response.get("new_message", state["message_template"]),
-                    "message_char_count": len(user_response.get("new_message", "")),
-                    "current_step": "message_edited",
-                }
-            elif user_response.get("action") == "rewrite":
-                return {"current_step": "message_rewrite"}
-
-    return {"current_step": "message_approved"}
-
-
-async def confirm_campaign(state: CampaignState) -> dict:
-    """
-    Final confirmation before sending — always interrupts (both modes).
-
-    Sending messages to real customers is irreversible, so we always
-    require explicit confirmation, even in autopilot mode.
-    """
-    # Generate campaign name
-    campaign_name = f"{state.get('segment_name', 'Campaign')} — {state.get('channel', 'whatsapp').upper()}"
-
-    user_response = interrupt({
-        "type": "campaign_confirm",
-        "campaign_name": campaign_name,
-        "segment_name": state.get("segment_name", ""),
-        "audience_count": state.get("audience_count", 0),
-        "channel": state.get("channel", "whatsapp"),
-        "message_preview": state.get("message_template", "")[:200],
-        "message": f"Ready to send to {state.get('audience_count', 0)} customers via {state.get('channel', 'whatsapp')}. Confirm?",
-    })
-
-    if isinstance(user_response, dict) and user_response.get("action") == "cancel":
-        return {
-            "error": "Campaign cancelled by user",
-            "current_step": "campaign_cancelled",
-        }
-
-    return {
-        "campaign_name": campaign_name,
-        "current_step": "campaign_confirmed",
-    }
-
-
 async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
     Execute the campaign — create records and prepare for dispatch.
@@ -277,14 +302,25 @@ async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> d
     Input: state.segment_id, state.channel, state.message_template, state.audience_sql
     Output: campaign_id, total_audience, communications_created
     """
-    logger.info(f"Executing campaign: {state.get('campaign_name', 'unknown')}")
+    from app.sse.manager import push_event
+    conv_id = state.get("conversation_id", "")
+
+    # Generate campaign name
+    campaign_name = f"{state.get('segment_name', 'Campaign')} — {(state.get('channel', 'whatsapp') or 'whatsapp').upper()}"
+
+    logger.info(f"Executing campaign: {campaign_name}")
+
+    await push_event(conv_id, "step_start", {
+        "step": "Creating campaign",
+        "message": f"Launching \"{campaign_name}\" to {state.get('audience_count', 0)} customers...",
+    })
 
     result = await agent_tools.execute_campaign(
         llm_client=llm_client,
         segment_id=state["segment_id"],
-        channel=state["channel"],
+        channel=state.get("channel", "whatsapp") or "whatsapp",
         message_template=state["message_template"],
-        campaign_name=state.get("campaign_name", "Campaign"),
+        campaign_name=campaign_name,
         audience_sql=state["audience_sql"],
     )
 
@@ -296,6 +332,7 @@ async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> d
 
     return {
         "campaign_id": result["campaign_id"],
+        "campaign_name": campaign_name,
         "total_audience": result["total_audience"],
         "communications_created": result["communications_created"],
         "current_step": "campaign_executing",

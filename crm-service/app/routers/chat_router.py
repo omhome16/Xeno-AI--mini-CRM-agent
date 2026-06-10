@@ -1,19 +1,17 @@
 """
-Chat API Router — The main AI agent interface.
+Chat API Router — The main AI agent interface (Campaign Studio).
 
 Endpoints:
-  POST /api/chat          — Start a new agent conversation
-  POST /api/chat/resume   — Resume an interrupted conversation (human-in-the-loop)
+  POST /api/chat            — Brainstorm / query / general chat (no interrupts)
+  POST /api/chat/plan       — Generate a campaign plan from a brief
+  POST /api/chat/execute    — Execute an approved campaign end-to-end
+  POST /api/chat/resume     — Resume an interrupted conversation (legacy, kept for safety)
   GET  /api/chat/stream/:id — SSE stream for real-time updates
 
-Flow:
-  1. Frontend sends user message to POST /api/chat
-  2. Backend starts the LangGraph workflow as a background task
-  3. Frontend connects to GET /api/chat/stream/:id for real-time updates
-  4. When the agent hits an interrupt (human-in-the-loop), it sends an interrupt event
-  5. Frontend shows the interrupt card, user responds
-  6. Frontend sends response to POST /api/chat/resume
-  7. Workflow continues from where it was interrupted
+Campaign Studio Flow:
+  1. BRAINSTORM: User chats with AI → POST /api/chat (returns AI response + suggestions)
+  2. PLAN: User clicks "Plan This Campaign" → POST /api/chat/plan (returns audience + message)
+  3. EXECUTE: User clicks "Launch" → POST /api/chat/execute (runs campaign end-to-end)
 """
 
 import json
@@ -37,7 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
 # ── In-memory state store (Redis in production) ──
-# Maps conversation_id → last graph state snapshot
 _conversation_states: dict[str, dict] = {}
 _conversation_configs: dict[str, dict] = {}
 
@@ -47,13 +44,31 @@ _conversation_configs: dict[str, dict] = {}
 class ChatRequest(BaseModel):
     """Request to start a new chat or send a message."""
     message: str = Field(..., min_length=1, max_length=2000)
-    mode: str = Field(default="guided", pattern="^(guided|autopilot)$")
+    mode: str = Field(default="brainstorm")
     conversation_id: Optional[str] = None
     history: list[dict] = Field(default_factory=list, description="Previous conversation messages for context")
+    brief: dict = Field(default_factory=dict, description="Current campaign brief state")
+
+
+class PlanRequest(BaseModel):
+    """Request to generate a campaign plan from a brief."""
+    brief: dict = Field(..., description="Campaign brief: {goal, audience, channel, message_idea, offer}")
+    conversation_id: Optional[str] = None
+    history: list[dict] = Field(default_factory=list)
+
+
+class ExecuteRequest(BaseModel):
+    """Request to execute a fully approved campaign."""
+    brief: dict = Field(..., description="Campaign brief")
+    audience_description: str = Field(..., description="Audience description for SQL generation")
+    channel: str = Field(default="whatsapp")
+    message_description: str = Field(default="")
+    offer_details: str = Field(default="")
+    conversation_id: Optional[str] = None
 
 
 class ResumeRequest(BaseModel):
-    """Request to resume an interrupted conversation."""
+    """Request to resume an interrupted conversation (legacy)."""
     conversation_id: str
     response: dict = Field(
         ..., description="User's response to the interrupt (action + data)"
@@ -79,48 +94,37 @@ async def _run_graph(
     Run the LangGraph workflow as a background task.
 
     Streams events to the SSE queue as the graph progresses.
-    When an interrupt is hit, sends the interrupt data and pauses.
     """
     try:
         graph = build_campaign_graph(llm_client)
 
         await push_event(conversation_id, "step_start", {
-            "step": "Starting agent workflow",
+            "step": "Starting",
             "message": f"Processing: {state.get('user_message', '')[:100]}",
         })
 
-        # Run graph with interrupt support
         config = {"configurable": {"thread_id": conversation_id}}
 
         if resume_value is not None:
-            # Resuming from interrupt
             from langgraph.types import Command
-            result_events = []
             async for event in graph.astream(
                 Command(resume=resume_value),
                 config=config,
             ):
-                result_events.append(event)
                 await _process_graph_event(conversation_id, event)
         else:
-            # Fresh start
-            result_events = []
             async for event in graph.astream(state, config=config):
-                result_events.append(event)
                 await _process_graph_event(conversation_id, event)
 
         # Check if we ended with an interrupt
         snapshot = graph.get_state(config)
         if snapshot.next:
-            # Graph is interrupted — save state for resume
             _conversation_states[conversation_id] = dict(snapshot.values)
             _conversation_configs[conversation_id] = config
-
-            # The interrupt event was already sent by the node
             logger.info(f"Graph interrupted at: {snapshot.next}")
             return
 
-        # Graph completed normally
+        # Graph completed — send result
         final_state = snapshot.values if snapshot else {}
         await push_event(conversation_id, "result", {
             "step": "complete",
@@ -138,14 +142,12 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
     """Process a single graph stream event and push to SSE."""
     for node_name, node_output in event.items():
         if node_name == "__interrupt__":
-            # LangGraph interrupt — extract the value as a plain dict
             if isinstance(node_output, (list, tuple)) and node_output:
                 item = node_output[0]
                 interrupt_data = item.value if hasattr(item, 'value') else item
             else:
                 interrupt_data = node_output
 
-            # Ensure interrupt_data is a plain dict
             if not isinstance(interrupt_data, dict):
                 interrupt_data = {"raw": str(interrupt_data)}
             else:
@@ -162,7 +164,7 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
 
 
 def _serialize_state(state: dict) -> dict:
-    """Serialize state for JSON transmission (handle UUIDs, datetimes, Decimals, etc.)."""
+    """Serialize state for JSON transmission."""
     from decimal import Decimal
     from uuid import UUID
 
@@ -178,8 +180,7 @@ def _serialize_state(state: dict) -> dict:
         if isinstance(value, dict):
             return {k: _convert(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
-            return [_convert(v) for v in value[:20]]  # Cap list size
-        # Fallback for any unknown type (Interrupt, etc.)
+            return [_convert(v) for v in value[:50]]
         return str(value)
 
     return {k: _convert(v) for k, v in state.items()}
@@ -191,28 +192,29 @@ def _serialize_state(state: dict) -> dict:
     "",
     response_model=ChatResponse,
     status_code=202,
-    summary="Start a new chat",
+    summary="Brainstorm, query, or chat with the AI agent",
 )
 async def start_chat(request: ChatRequest):
     """
-    Start a new agent conversation.
+    Send a message to the AI agent.
 
-    Returns a conversation_id immediately. Connect to
-    GET /api/chat/stream/{conversation_id} for real-time updates.
+    In Campaign Studio, this handles:
+    - Brainstorm: AI responds with suggestions and brief updates
+    - Query: AI runs SQL and returns customer data
+    - General chat: AI answers questions about the CRM
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
 
-    # Build initial state
     state: CampaignState = {
         "user_message": request.message,
         "mode": request.mode,
         "conversation_id": conversation_id,
-        "messages": request.history[-10:],  # Last 10 messages for context
+        "messages": request.history[-10:],
+        "brief": request.brief,
         "current_step": "starting",
     }
 
-    # Initialize LLM client
     llm_client = DualLLMClient(
         gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
@@ -224,7 +226,6 @@ async def start_chat(request: ChatRequest):
             detail="No LLM providers configured. Set GEMINI_API_KEY or GROQ_API_KEY.",
         )
 
-    # Start graph as background task
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
         name=f"chat-{conversation_id[:8]}",
@@ -237,6 +238,113 @@ async def start_chat(request: ChatRequest):
 
 
 @router.post(
+    "/plan",
+    response_model=ChatResponse,
+    status_code=202,
+    summary="Generate a campaign plan from a brief",
+)
+async def plan_campaign(request: PlanRequest):
+    """
+    Generate a campaign plan: build audience segment + draft message.
+
+    Takes a campaign brief and returns:
+    - Audience SQL + count + preview
+    - Drafted message
+    - Segment metadata
+    """
+    settings = get_settings()
+    conversation_id = request.conversation_id or uuid4().hex
+
+    brief = request.brief
+    audience = brief.get("audience", "all customers")
+    channel = brief.get("channel", "whatsapp")
+    message_idea = brief.get("message_idea", "")
+    offer = brief.get("offer", "")
+
+    state: CampaignState = {
+        "user_message": f"Create campaign for: {audience}",
+        "mode": "plan",
+        "conversation_id": conversation_id,
+        "messages": request.history[-10:],
+        "brief": brief,
+        "action": "create_campaign",  # Skip intent parsing — go straight to build
+        "audience_description": audience,
+        "message_description": message_idea or offer or f"Campaign message for {audience}",
+        "channel": channel,
+        "offer_details": offer,
+        "current_step": "planning",
+    }
+
+    llm_client = DualLLMClient(
+        gemini_key=settings.GEMINI_API_KEY,
+        groq_key=settings.GROQ_API_KEY,
+    )
+
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="No LLM providers configured.")
+
+    asyncio.create_task(
+        _run_graph(conversation_id, state, llm_client),
+        name=f"plan-{conversation_id[:8]}",
+    )
+
+    return ChatResponse(
+        conversation_id=conversation_id,
+        status="planning",
+        message="Generating campaign plan...",
+    )
+
+
+@router.post(
+    "/execute",
+    response_model=ChatResponse,
+    status_code=202,
+    summary="Execute an approved campaign end-to-end",
+)
+async def execute_campaign(request: ExecuteRequest):
+    """
+    Execute a fully approved campaign.
+
+    Takes the complete campaign spec and runs:
+    build_segment → draft_message → execute_campaign → END
+    """
+    settings = get_settings()
+    conversation_id = request.conversation_id or uuid4().hex
+
+    state: CampaignState = {
+        "user_message": f"Execute campaign: {request.audience_description}",
+        "mode": "execute",
+        "conversation_id": conversation_id,
+        "action": "create_campaign",
+        "audience_description": request.audience_description,
+        "message_description": request.message_description or request.brief.get("message_idea", ""),
+        "channel": request.channel,
+        "offer_details": request.offer_details or request.brief.get("offer", ""),
+        "brief": request.brief,
+        "current_step": "executing",
+    }
+
+    llm_client = DualLLMClient(
+        gemini_key=settings.GEMINI_API_KEY,
+        groq_key=settings.GROQ_API_KEY,
+    )
+
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="No LLM providers configured.")
+
+    asyncio.create_task(
+        _run_graph(conversation_id, state, llm_client),
+        name=f"exec-{conversation_id[:8]}",
+    )
+
+    return ChatResponse(
+        conversation_id=conversation_id,
+        status="executing",
+        message="Launching campaign...",
+    )
+
+
+@router.post(
     "/resume",
     response_model=ChatResponse,
     status_code=202,
@@ -244,19 +352,19 @@ async def start_chat(request: ChatRequest):
 )
 async def resume_chat(request: ResumeRequest):
     """
-    Resume a conversation from a human-in-the-loop interrupt.
-
-    The frontend sends the user's response to the interrupt
-    (approve, edit, cancel), and the graph continues.
+    Resume a conversation from a human-in-the-loop interrupt (legacy).
+    Returns a soft 200 if conversation not found (fixes double-resume bug).
     """
     settings = get_settings()
     conversation_id = request.conversation_id
 
     saved_state = _conversation_states.get(conversation_id)
     if not saved_state:
-        raise HTTPException(
-            status_code=404,
-            detail="Conversation not found or no pending interrupt",
+        # Soft response instead of 404 — fixes double-resume bug
+        return ChatResponse(
+            conversation_id=conversation_id,
+            status="already_completed",
+            message="This conversation has already completed or no pending interrupt.",
         )
 
     llm_client = DualLLMClient(
@@ -264,14 +372,14 @@ async def resume_chat(request: ResumeRequest):
         groq_key=settings.GROQ_API_KEY,
     )
 
-    # Resume graph with user's response
+    # Clean up before resuming to prevent double-resume
+    _conversation_states.pop(conversation_id, None)
+    _conversation_configs.pop(conversation_id, None)
+
     asyncio.create_task(
         _run_graph(conversation_id, saved_state, llm_client, resume_value=request.response),
         name=f"chat-resume-{conversation_id[:8]}",
     )
-
-    # Clean up saved state
-    _conversation_states.pop(conversation_id, None)
 
     return ChatResponse(
         conversation_id=conversation_id,
@@ -288,13 +396,10 @@ async def chat_stream(conversation_id: str):
     """
     Server-Sent Events stream for a conversation.
 
-    Connect to this endpoint after starting a chat to receive
-    real-time updates as the agent processes the workflow.
-
     Event types:
       - step_start: Agent started a new step
       - step_complete: Agent finished a step (includes data)
-      - interrupt: Agent paused for human review (includes interrupt card data)
+      - interrupt: Agent paused for human review
       - result: Final result
       - error: Something went wrong
       - heartbeat: Keep-alive (every 15s)
@@ -305,6 +410,6 @@ async def chat_stream(conversation_id: str):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )

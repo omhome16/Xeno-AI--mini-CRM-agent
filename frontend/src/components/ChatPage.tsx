@@ -1,274 +1,484 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp, Sparkles, Zap, Check } from 'lucide-react';
-import { startChat, resumeChat, connectSSE } from '../api';
-import InterruptCard from './InterruptCard';
+import { Send, Sparkles, Bot, User } from 'lucide-react';
+import {
+  startChat,
+  planCampaign,
+  executeCampaign,
+  connectSSE,
+  type CampaignBrief,
+  type Suggestion,
+} from '../api';
+import CampaignBriefCard from './CampaignBriefCard';
+import SuggestionChips from './SuggestionChips';
+import CampaignPlanCard from './CampaignPlanCard';
+import ExecutionTrail, { type TrailStep } from './ExecutionTrail';
 import CustomerPreviewTable from './CustomerPreviewTable';
 
-interface Message {
+type Phase = 'brainstorm' | 'planning' | 'plan_review' | 'executing' | 'done';
+
+interface ChatMessage {
   id: string;
-  type: 'user' | 'agent' | 'system' | 'interrupt' | 'step';
+  role: 'user' | 'assistant' | 'system';
   content: string;
-  data?: unknown;
-  timestamp: Date;
+  suggestions?: Suggestion[];
+  customerPreview?: Record<string, any>[];
+  customerCount?: number;
 }
 
-interface ChatPageProps {
-  messages: Message[];
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-}
+export default function ChatPage() {
+  // ── Phase state ──
+  const [phase, setPhase] = useState<Phase>('brainstorm');
 
-export default function ChatPage({ messages, setMessages }: ChatPageProps) {
+  // ── Brainstorm state ──
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: 'welcome',
+    role: 'assistant',
+    content: "Hi! I'm your AI Campaign Strategist. Tell me about the campaign you want to create — who do you want to reach, what do you want to say, and how? Let's brainstorm together! 🚀",
+    suggestions: [
+      { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
+      { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },
+      { label: 'Welcome new signups', value: 'I want to welcome new customers who just signed up', category: 'audience' },
+      { label: 'VIP exclusive offer', value: 'I want to send an exclusive offer to VIP customers', category: 'offer' },
+    ],
+  }]);
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState<'guided' | 'autopilot'>('guided');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [loading, setLoading] = useState(false);
+  const [brief, setBrief] = useState<CampaignBrief>({});
+  const [readyToPlan, setReadyToPlan] = useState(false);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+  // ── Plan state ──
+  const [planData, setPlanData] = useState<{
+    audienceCount: number;
+    audiencePreview: Record<string, any>[];
+    audienceSql: string;
+    messageTemplate: string;
+    channel: string;
+    segmentName: string;
+  } | null>(null);
 
-  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
-  useEffect(() => { return () => { eventSource?.close(); }; }, [eventSource]);
+  // ── Execute state ──
+  const [trailSteps, setTrailSteps] = useState<TrailStep[]>([]);
+  const [campaignResult, setCampaignResult] = useState<any>(null);
+  const [execError, setExecError] = useState<string | undefined>();
 
-  const addMessage = useCallback((msg: Omit<Message, 'id' | 'timestamp'>) => {
-    setMessages(prev => [...prev, {
-      ...msg,
-      id: crypto.randomUUID(),
-      timestamp: new Date(),
-    }]);
-  }, [setMessages]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleSSEEvent = useCallback((event: { type: string; data: unknown }) => {
-    const d = event.data as Record<string, unknown>;
-    switch (event.type) {
-      case 'step_start':
-        addMessage({ type: 'step', content: (d.message as string) || (d.step as string) || 'Processing...' });
-        break;
-      case 'step_complete': {
-        // Show node completions as subtle step indicators, not agent bubbles
-        const stepName = (d.step as string) || '';
-        // Map raw node names to human-readable labels
-        const labels: Record<string, string> = {
-          parse_intent: 'Intent parsed',
-          build_segment: 'Segment built',
-          review_segment: 'Segment reviewed',
-          draft_message: 'Message drafted',
-          review_message: 'Message reviewed',
-          confirm_campaign: 'Campaign confirmed',
-          execute_campaign: 'Campaign executed',
-        };
-        addMessage({ type: 'step', content: labels[stepName] || stepName || 'Step completed' });
-        break;
-      }
-      case 'interrupt':
-        setIsProcessing(false);
-        addMessage({ type: 'interrupt', content: '', data: d });
-        break;
-      case 'result': {
-        setIsProcessing(false);
-        // Build a human-readable summary from the state
-        const state = (d.state || d) as Record<string, unknown>;
-        let summary = '';
-        if (state.audience_count) {
-          summary = `Found ${state.audience_count} customers`;
-          if (state.segment_name) summary += ` in segment "${state.segment_name}"`;
-          summary += '.';
-        } else if (state.campaign_id) {
-          summary = `Campaign created successfully. ${state.communications_created || 0} messages queued for delivery.`;
+  // Auto-scroll
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, phase]);
+
+  // Focus input
+  useEffect(() => {
+    if (phase === 'brainstorm' && !loading) {
+      inputRef.current?.focus();
+    }
+  }, [phase, loading]);
+
+  // ── Build history for API calls ──
+  const getHistory = useCallback(() => {
+    return messages
+      .filter(m => m.role !== 'system' && m.id !== 'welcome')
+      .map(m => ({ role: m.role, content: m.content }));
+  }, [messages]);
+
+  // ── Handle SSE events from brainstorm/query ──
+  const handleChatSSE = useCallback((event: { type: string; data: any }) => {
+    if (event.type === 'step_complete') {
+      const { step, data } = event.data;
+
+      if (step === 'respond_brainstorm' && data) {
+        const aiResponse = data.ai_response || 'Let me help you plan a campaign!';
+        const suggestions = data.suggestions || [];
+        const newBrief = data.brief || {};
+        const isReady = data.ready_to_plan || false;
+
+        setBrief(newBrief);
+        setReadyToPlan(isReady);
+
+        setMessages(prev => [...prev, {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: aiResponse,
+          suggestions,
+        }]);
+        setLoading(false);
+      } else if (step === 'respond_general' && data) {
+        setMessages(prev => [...prev, {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: data.ai_response || 'I\'m here to help!',
+        }]);
+        setLoading(false);
+      } else if (step === 'build_segment' && data) {
+        // Query result
+        if (data.error) {
+          setMessages(prev => [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: `❌ ${data.error}`,
+          }]);
         } else {
-          summary = 'Done.';
+          const count = data.audience_count || 0;
+          const preview = data.audience_preview || [];
+          setMessages(prev => [...prev, {
+            id: `ai-${Date.now()}`,
+            role: 'assistant',
+            content: `Found **${count.toLocaleString()} customers** matching your query.`,
+            customerPreview: preview,
+            customerCount: count,
+          }]);
         }
-        addMessage({ type: 'agent', content: summary, data: state });
-        break;
+        setLoading(false);
       }
-      case 'error':
-        setIsProcessing(false);
-        addMessage({ type: 'system', content: (d.message as string) || 'An error occurred' });
-        break;
-      case 'campaign_update':
-        addMessage({ type: 'agent', content: `Campaign: ${d.sent || 0}/${d.total || 0} sent (${d.progress_pct || 0}%)`, data: d });
-        break;
-    }
-  }, [addMessage]);
+    } else if (event.type === 'result') {
+      const state = event.data?.state || {};
 
-  const handleSend = async () => {
-    const msg = input.trim();
-    if (!msg || isProcessing) return;
+      // If this was a query/general and we haven't processed it via step_complete
+      if (state.ai_response && !messages.find(m => m.content === state.ai_response)) {
+        setMessages(prev => [...prev, {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: state.ai_response,
+          suggestions: state.suggestions || [],
+        }]);
+
+        if (state.brief) setBrief(state.brief);
+        if (state.ready_to_plan) setReadyToPlan(true);
+      }
+
+      // Handle query_customers result
+      if (state.action === 'query_customers' && state.audience_count && !state.ai_response) {
+        setMessages(prev => [...prev, {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: `Found **${(state.audience_count || 0).toLocaleString()} customers** matching your query.`,
+          customerPreview: state.audience_preview || [],
+          customerCount: state.audience_count,
+        }]);
+      }
+
+      setLoading(false);
+    } else if (event.type === 'error') {
+      setMessages(prev => [...prev, {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ ${event.data?.message || 'Something went wrong. Try again.'}`,
+      }]);
+      setLoading(false);
+    }
+  }, [messages]);
+
+  // ── Send a brainstorm message ──
+  const handleSend = async (text?: string) => {
+    const msg = text || input.trim();
+    if (!msg || loading) return;
+
     setInput('');
-    setIsProcessing(true);
-    addMessage({ type: 'user', content: msg });
+    setMessages(prev => [...prev, {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: msg,
+    }]);
+    setLoading(true);
+
     try {
-      const historyParam = messages
-        .filter(m => m.type === 'user' || m.type === 'agent')
-        .map(m => ({
-          role: m.type === 'user' ? 'user' : 'assistant',
-          content: m.content
-        }));
-
-      const result = await startChat(msg, mode, historyParam);
-      setConversationId(result.conversation_id);
-      const es = connectSSE(result.conversation_id, handleSSEEvent);
-      setEventSource(prev => { prev?.close(); return es; });
+      const { conversation_id } = await startChat(msg, 'brainstorm', getHistory(), brief);
+      connectSSE(conversation_id, handleChatSSE);
     } catch (err) {
-      setIsProcessing(false);
-      addMessage({ type: 'system', content: `Failed to connect: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      setMessages(prev => [...prev, {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: '⚠️ Failed to connect to the AI agent. Is the backend running?',
+      }]);
+      setLoading(false);
     }
   };
 
-  const handleResume = async (response: Record<string, unknown>) => {
-    if (!conversationId) return;
-    setIsProcessing(true);
-    addMessage({
-      type: 'user',
-      content: response.action === 'approve' ? 'Approved' :
-               response.action === 'cancel' ? 'Cancelled' :
-               `${response.action as string || 'Response sent'}`,
-    });
+  // ── Handle suggestion chip click ──
+  const handleSuggestionClick = (suggestion: Suggestion) => {
+    handleSend(suggestion.value);
+  };
+
+  // ── Plan the campaign ──
+  const handlePlanCampaign = async () => {
+    setPhase('planning');
+    setLoading(true);
+    setPlanData(null);
+
     try {
-      await resumeChat(conversationId, response);
-      const es = connectSSE(conversationId, handleSSEEvent);
-      setEventSource(prev => { prev?.close(); return es; });
-    } catch (err) {
-      setIsProcessing(false);
-      addMessage({ type: 'system', content: `Resume failed: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      const { conversation_id } = await planCampaign(brief, getHistory());
+      connectSSE(conversation_id, (event) => {
+        if (event.type === 'result') {
+          const state = event.data?.state || {};
+          if (state.audience_count) {
+            setPlanData({
+              audienceCount: state.audience_count,
+              audiencePreview: state.audience_preview || [],
+              audienceSql: state.audience_sql || '',
+              messageTemplate: state.message_template || '',
+              channel: state.channel || brief.channel || 'whatsapp',
+              segmentName: state.segment_name || 'Campaign Segment',
+            });
+            setPhase('plan_review');
+          } else {
+            setMessages(prev => [...prev, {
+              id: `err-${Date.now()}`,
+              role: 'assistant',
+              content: '⚠️ Could not build a plan. Try refining your audience description.',
+            }]);
+            setPhase('brainstorm');
+          }
+          setLoading(false);
+        } else if (event.type === 'error') {
+          setMessages(prev => [...prev, {
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            content: `⚠️ ${event.data?.message || 'Planning failed. Try again.'}`,
+          }]);
+          setPhase('brainstorm');
+          setLoading(false);
+        }
+      });
+    } catch {
+      setPhase('brainstorm');
+      setLoading(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  // ── Launch the campaign ──
+  const handleLaunchCampaign = async () => {
+    setPhase('executing');
+    setLoading(true);
+    setCampaignResult(null);
+    setExecError(undefined);
+    setTrailSteps([
+      { id: '1', label: 'Building Audience', message: 'Querying database...', status: 'running' },
+      { id: '2', label: 'Drafting Message', message: 'Generating copy...', status: 'pending' },
+      { id: '3', label: 'Creating Campaign', message: 'Setting up records...', status: 'pending' },
+    ]);
+
+    try {
+      const { conversation_id } = await executeCampaign(
+        brief,
+        brief.audience || 'all customers',
+        brief.channel || 'whatsapp',
+        brief.message_idea || '',
+        brief.offer || '',
+      );
+
+      connectSSE(conversation_id, (event) => {
+        if (event.type === 'step_start' || event.type === 'step_complete') {
+          const stepMsg = event.data?.message || event.data?.step || '';
+          const stepLabel = event.data?.step || '';
+          const isComplete = event.type === 'step_complete';
+
+          setTrailSteps(prev => {
+            const updated = [...prev];
+            const lowerLabel = stepLabel.toLowerCase();
+
+            if (lowerLabel.includes('sql') || lowerLabel.includes('found') || lowerLabel.includes('segment') || lowerLabel.includes('audience')) {
+              if (isComplete) {
+                updated[0] = { ...updated[0], status: 'done', message: 'Audience segment created.' };
+                updated[1] = { ...updated[1], status: 'running', message: 'Generating copy...' };
+              } else {
+                updated[0] = { ...updated[0], status: 'running', message: stepMsg };
+              }
+            } else if (lowerLabel.includes('draft') || lowerLabel.includes('message')) {
+              if (isComplete) {
+                updated[0] = { ...updated[0], status: 'done' };
+                updated[1] = { ...updated[1], status: 'done', message: 'Message drafted.' };
+                updated[2] = { ...updated[2], status: 'running', message: 'Setting up records...' };
+              } else {
+                updated[0] = { ...updated[0], status: 'done' };
+                updated[1] = { ...updated[1], status: 'running', message: stepMsg };
+              }
+            } else if (lowerLabel.includes('creat') || lowerLabel.includes('campaign') || lowerLabel.includes('launch') || lowerLabel.includes('execute')) {
+              if (isComplete) {
+                updated[0] = { ...updated[0], status: 'done' };
+                updated[1] = { ...updated[1], status: 'done' };
+                updated[2] = { ...updated[2], status: 'done', message: 'Campaign created and launched.' };
+              } else {
+                updated[0] = { ...updated[0], status: 'done' };
+                updated[1] = { ...updated[1], status: 'done' };
+                updated[2] = { ...updated[2], status: 'running', message: stepMsg };
+              }
+            }
+            return updated;
+          });
+        } else if (event.type === 'result') {
+          const state = event.data?.state || {};
+          setTrailSteps(prev => prev.map(s => ({ ...s, status: 'done' as const })));
+          if (state.campaign_id) {
+            setCampaignResult({
+              campaign_id: state.campaign_id,
+              campaign_name: state.campaign_name || 'Campaign',
+              total_audience: state.total_audience || 0,
+              communications_created: state.communications_created || 0,
+            });
+          }
+          setLoading(false);
+        } else if (event.type === 'error') {
+          setExecError(event.data?.message || 'Execution failed');
+          setTrailSteps(prev => {
+            const updated = [...prev];
+            return updated.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'error' as const } : s);
+          });
+          setLoading(false);
+        }
+      });
+    } catch {
+      setExecError('Failed to connect to the execution engine');
+      setLoading(false);
     }
   };
 
+  // ── Back to brainstorm ──
+  const handleBackToBrainstorm = () => {
+    setPhase('brainstorm');
+    setPlanData(null);
+  };
+
+  // ── Start new campaign ──
+  const handleNewCampaign = () => {
+    setPhase('brainstorm');
+    setBrief({});
+    setReadyToPlan(false);
+    setPlanData(null);
+    setCampaignResult(null);
+    setExecError(undefined);
+    setTrailSteps([]);
+    setMessages([{
+      id: 'welcome-new',
+      role: 'assistant',
+      content: "Ready for another campaign! What are you thinking? 🚀",
+      suggestions: [
+        { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
+        { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },
+        { label: 'VIP exclusive offer', value: 'I want to send an exclusive offer to VIP customers', category: 'offer' },
+      ],
+    }]);
+  };
+
+
+
+  // ── Render based on phase ──
   return (
-    <div className="chat-container">
-      {/* Messages */}
-      <div className="chat-messages">
-        {messages.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-icon">
-              <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
-                <path d="M36 4L43 28.5L68 36L43 43.5L36 68L29 43.5L4 36L29 28.5L36 4Z"
-                  stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" fill="none" />
-                <path d="M36 16L40 30L54 36L40 42L36 56L32 42L18 36L32 30L36 16Z"
-                  stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" fill="none" opacity="0.4" />
-              </svg>
-            </div>
-            <h3>Start a conversation</h3>
-            <p>
-              Describe a campaign in plain English. The agent will build your audience, 
-              draft the message, and send — with your approval at each step.
-            </p>
-          </div>
-        )}
+    <div className="campaign-studio">
+      {/* Phase indicator */}
+      <div className="phase-indicator">
+        <div className={`phase-step ${phase === 'brainstorm' ? 'active' : (phase !== 'brainstorm' ? 'completed' : '')}`}>
+          <span className="phase-dot">1</span>
+          <span className="phase-label">Brainstorm</span>
+        </div>
+        <div className="phase-connector" />
+        <div className={`phase-step ${phase === 'planning' || phase === 'plan_review' ? 'active' : (phase === 'executing' || phase === 'done' ? 'completed' : '')}`}>
+          <span className="phase-dot">2</span>
+          <span className="phase-label">Plan</span>
+        </div>
+        <div className="phase-connector" />
+        <div className={`phase-step ${phase === 'executing' || phase === 'done' ? 'active' : ''}`}>
+          <span className="phase-dot">3</span>
+          <span className="phase-label">Execute</span>
+        </div>
+      </div>
 
-        {messages.map(msg => {
-          if (msg.type === 'interrupt') {
-            return <InterruptCard key={msg.id} data={msg.data as Record<string, unknown>} onRespond={handleResume} />;
-          }
-          if (msg.type === 'step') {
-            const isLastStep = messages.filter(m => m.type === 'step').pop()?.id === msg.id;
-            const showSpinner = isLastStep && isProcessing;
-            return (
-              <div key={msg.id} className="step-indicator">
-                {showSpinner ? (
-                  <div className="spinner" />
-                ) : (
-                  <div className="step-check"><Check size={10} /></div>
-                )}
-                {msg.content}
-              </div>
-            );
-          }
-
-          if (msg.type === 'agent') {
-            const hasPreview = msg.data && typeof msg.data === 'object' && 'audience_preview' in (msg.data as any);
-            const data = msg.data as any;
-            return (
-              <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', gap: 10, alignSelf: 'flex-start', maxWidth: '88%', width: '100%' }}>
-                <div className="chat-bubble agent" style={{ maxWidth: '85%' }}>
-                  {msg.content}
-                </div>
-                {hasPreview && data.audience_preview && data.audience_preview.length > 0 && (
-                  <div className="interrupt-card" style={{ maxWidth: '100%', width: '100%', margin: '0 0 10px 0', animation: 'none' }}>
-                    <div className="card-header">
-                      <div className="card-icon segment" style={{ background: 'rgba(96, 165, 250, 0.12)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8 }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                      </div>
-                      <h3 style={{ fontSize: 14, fontWeight: 700 }}>Query Results</h3>
+      {/* Main content area */}
+      <div className="studio-content">
+        {/* Brainstorm Phase */}
+        {(phase === 'brainstorm' || phase === 'planning') && (
+          <div className="brainstorm-layout">
+            <div className="chat-area">
+              <div className="chat-messages">
+                {messages.map(msg => (
+                  <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
+                    <div className="msg-avatar">
+                      {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
                     </div>
-                    <div className="card-body" style={{ margin: 0 }}>
-                      {data.audience_sql && (
-                        <div style={{
-                          fontSize: 11,
-                          fontFamily: "'SFMono-Regular', 'Consolas', monospace",
-                          background: 'rgba(0,0,0,0.03)',
-                          padding: '6px 10px',
-                          borderRadius: 6,
-                          marginBottom: 10,
-                          color: 'var(--text-muted)',
-                          wordBreak: 'break-all',
-                          lineHeight: 1.4,
-                        }}>
-                          {data.audience_sql}
-                        </div>
+                    <div className="msg-body">
+                      <div className="msg-content">{msg.content}</div>
+                      {msg.customerPreview && (
+                        <CustomerPreviewTable preview={msg.customerPreview} totalCount={msg.customerCount || 0} />
                       )}
-                      <CustomerPreviewTable preview={data.audience_preview} totalCount={data.audience_count || 0} />
+                      {msg.suggestions && msg.suggestions.length > 0 && (
+                        <SuggestionChips
+                          suggestions={msg.suggestions}
+                          onSelect={handleSuggestionClick}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {loading && (
+                  <div className="chat-msg chat-msg-assistant">
+                    <div className="msg-avatar"><Bot size={16} /></div>
+                    <div className="msg-body">
+                      <div className="msg-content thinking">
+                        <div className="thinking-dots"><span /><span /><span /></div>
+                      </div>
                     </div>
                   </div>
                 )}
+                <div ref={chatEndRef} />
               </div>
-            );
-          }
 
-          return (
-            <div key={msg.id} className={`chat-bubble ${msg.type}`}>
-              {msg.content}
+              {/* Input bar */}
+              <div className="chat-input-bar glass">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                  placeholder={loading ? 'AI is thinking...' : 'Describe your campaign idea...'}
+                  disabled={loading || phase === 'planning'}
+                  className="chat-input"
+                />
+                <button
+                  className="chat-send-btn"
+                  onClick={() => handleSend()}
+                  disabled={!input.trim() || loading || phase === 'planning'}
+                >
+                  <Send size={18} />
+                </button>
+              </div>
             </div>
-          );
-        })}
 
-        {isProcessing && (messages.length === 0 || messages[messages.length - 1]?.type !== 'step') && (
-          <div className="chat-bubble agent" style={{ alignSelf: 'flex-start' }}>
-            <div className="loading-dots"><span /><span /><span /></div>
+            {/* Brief sidebar */}
+            <div className="brief-sidebar">
+              <CampaignBriefCard
+                brief={brief}
+                readyToPlan={readyToPlan}
+                onPlanClick={handlePlanCampaign}
+              />
+            </div>
           </div>
         )}
 
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <div className="chat-input-area">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <div className="mode-toggle">
-            <button className={mode === 'guided' ? 'active' : ''} onClick={() => setMode('guided')}>
-              <Sparkles size={12} /> Guided
-            </button>
-            <button className={mode === 'autopilot' ? 'active' : ''} onClick={() => setMode('autopilot')}>
-              <Zap size={12} /> Autopilot
-            </button>
+        {/* Plan Review Phase */}
+        {phase === 'plan_review' && planData && (
+          <div className="plan-review-area">
+            <CampaignPlanCard
+              {...planData}
+              onLaunch={handleLaunchCampaign}
+              onBack={handleBackToBrainstorm}
+              loading={loading}
+            />
           </div>
-        </div>
+        )}
 
-        <div className="chat-input-container">
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Send a 10% discount to VIP customers in Mumbai via WhatsApp..."
-            disabled={isProcessing}
-            rows={1}
-          />
-          <button className="send-btn" onClick={handleSend} disabled={!input.trim() || isProcessing}>
-            <ArrowUp />
-          </button>
-        </div>
+        {/* Execution Phase */}
+        {phase === 'executing' && (
+          <div className="execution-area">
+            <ExecutionTrail
+              steps={trailSteps}
+              campaignResult={campaignResult}
+              error={execError}
+              onDone={handleNewCampaign}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

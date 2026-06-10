@@ -21,20 +21,27 @@ class CampaignState(TypedDict, total=False):
 
     # ── User Input ──
     user_message: str           # Original user message
-    mode: str                   # "guided" or "autopilot"
+    mode: str                   # "brainstorm", "plan", "execute", or legacy "guided"/"autopilot"
     conversation_id: str        # For persistence
 
     # ── Intent (parsed from user message) ──
-    action: str                 # create_campaign, query_customers, analytics, general_chat
+    action: str                 # brainstorm, create_campaign, query_customers, general_chat
     audience_description: str   # NL description of target audience
     message_description: str    # What kind of message to send
     channel: str                # whatsapp, sms, email, rcs
     offer_details: str          # Specific offer/discount
 
+    # ── Brainstorm ──
+    brief: dict                 # Accumulated campaign brief: {goal, audience, channel, message_idea, offer}
+    ai_response: str            # AI's conversational response text
+    suggestions: list           # Structured suggestion chips for the UI
+    ready_to_plan: bool         # Whether the brief is complete enough to plan
+    brief_updates: dict         # Latest updates to the brief from this exchange
+
     # ── Segment (built from audience query) ──
     audience_sql: str           # The SQL used to query the audience
     audience_count: int         # Number of matching customers
-    audience_preview: list      # First 10 customers for preview
+    audience_preview: list      # Customer preview rows
     segment_id: str             # UUID of saved segment
     segment_name: str           # Generated segment name
     filter_criteria: dict       # JSONB filter for reproducibility
