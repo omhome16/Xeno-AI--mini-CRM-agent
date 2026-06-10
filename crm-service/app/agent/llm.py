@@ -197,13 +197,23 @@ class DualLLMClient:
         user_input: str,
         response_format: Optional[dict] = None,
     ) -> Optional[str]:
-        """Call Groq API."""
+        """Call Groq API with robust model cycling and JSON retry."""
         import asyncio
         client = self._get_groq()
         if not client:
             return None
 
-        def _sync_call(model_name: str):
+        # Standard active Groq models in prioritized order
+        models = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-versatile",
+            "llama3-70b-8192",
+            "llama-3.1-8b-instant",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768",
+        ]
+
+        def _sync_call(model_name: str, use_json_format: bool = True):
             kwargs = {
                 "model": model_name,
                 "messages": [
@@ -213,28 +223,40 @@ class DualLLMClient:
                 "temperature": 0.3,
                 "max_tokens": 2048,
             }
-            if response_format:
+            if response_format and use_json_format:
                 kwargs["response_format"] = response_format
             response = client.chat.completions.create(**kwargs)
             return response.choices[0].message.content
 
-        try:
-            result = await asyncio.to_thread(_sync_call, "llama-3.3-70b-versatile")
-            logger.debug(f"Groq response: {result[:200]}...")
-            return result
-        except Exception as e:
-            err_str = str(e).lower()
-            if "rate_limit" in err_str or "429" in err_str or "limit reached" in err_str:
-                logger.warning(f"Groq model llama-3.3-70b-versatile rate limited, retrying with llama-3.1-8b-instant: {e}")
-                try:
-                    result = await asyncio.to_thread(_sync_call, "llama-3.1-8b-instant")
-                    logger.debug(f"Groq fallback response: {result[:200]}...")
+        last_error = None
+        for model in models:
+            # Try with JSON formatting constraint if response_format is provided
+            try:
+                result = await asyncio.to_thread(_sync_call, model, True)
+                if result is not None:
+                    logger.debug(f"Groq ({model}) response: {result[:200]}...")
                     return result
-                except Exception as ex:
-                    logger.error(f"Groq fallback model llama-3.1-8b-instant also failed: {ex}")
-                    raise ex
-            else:
-                raise e
+            except Exception as e:
+                err_str = str(e).lower()
+                last_error = e
+                # If JSON validation failure occurs, retry this model without the response_format constraint
+                if "json" in err_str or "format" in err_str or "validate" in err_str:
+                    logger.warning(f"Groq ({model}) JSON mode failed, retrying without JSON formatting constraint: {e}")
+                    try:
+                        result = await asyncio.to_thread(_sync_call, model, False)
+                        if result is not None:
+                            logger.debug(f"Groq ({model}) response without JSON format: {result[:200]}...")
+                            return result
+                    except Exception as ex:
+                        logger.warning(f"Groq ({model}) retry without JSON format also failed: {ex}")
+                        last_error = ex
+                else:
+                    logger.warning(f"Groq ({model}) failed: {e}. Trying next model...")
+
+        # If all models in the list failed, raise the last encountered error
+        if last_error:
+            raise last_error
+        return None
 
     @property
     def is_configured(self) -> bool:

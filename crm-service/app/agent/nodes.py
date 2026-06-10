@@ -243,6 +243,20 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
             if v:
                 brief[k] = v
 
+    # Auto-finish brainstorming check: require goal, audience, and channel
+    if brief.get("goal") and brief.get("audience") and brief.get("channel"):
+        ready_to_plan = True
+
+    if ready_to_plan:
+        plan_chip = {
+            "label": "Generate Campaign Plan",
+            "value": "plan_campaign",
+            "category": "action",
+        }
+        # Avoid duplicate chips, put it first
+        filtered_suggestions = [s for s in suggestions if s.get("value") != "plan_campaign"]
+        suggestions = [plan_chip] + filtered_suggestions
+
     return {
         "ai_response": ai_response,
         "suggestions": suggestions,

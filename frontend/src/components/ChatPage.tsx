@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Sparkles, Bot, User } from 'lucide-react';
+import { Send, Bot, User } from 'lucide-react';
 import {
   startChat,
   planCampaign,
@@ -23,6 +23,17 @@ interface ChatMessage {
   suggestions?: Suggestion[];
   customerPreview?: Record<string, any>[];
   customerCount?: number;
+}
+
+function formatMessageContent(content: string) {
+  if (!content) return '';
+  const parts = content.split('**');
+  return parts.map((part, index) => {
+    if (index % 2 === 1) {
+      return <strong key={index}>{part}</strong>;
+    }
+    return part;
+  });
 }
 
 export default function ChatPage() {
@@ -224,7 +235,11 @@ export default function ChatPage() {
 
   // ── Handle suggestion chip click ──
   const handleSuggestionClick = (suggestion: Suggestion) => {
-    handleSend(suggestion.value);
+    if (suggestion.category === 'action' && suggestion.value === 'plan_campaign') {
+      handlePlanCampaign();
+    } else {
+      handleSend(suggestion.value);
+    }
   };
 
   // ── Plan the campaign ──
@@ -394,7 +409,7 @@ export default function ChatPage() {
     <div className="campaign-studio">
       {/* Phase indicator */}
       <div className="phase-indicator">
-        <div className={`phase-step ${phase === 'brainstorm' ? 'active' : (phase !== 'brainstorm' ? 'completed' : '')}`}>
+        <div className={`phase-step ${phase === 'brainstorm' ? 'active' : 'completed'}`}>
           <span className="phase-dot">1</span>
           <span className="phase-label">Brainstorm</span>
         </div>
@@ -423,7 +438,7 @@ export default function ChatPage() {
                       {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
                     </div>
                     <div className="msg-body">
-                      <div className="msg-content">{msg.content}</div>
+                      <div className="msg-content">{formatMessageContent(msg.content)}</div>
                       {msg.customerPreview && (
                         <CustomerPreviewTable preview={msg.customerPreview} totalCount={msg.customerCount || 0} />
                       )}

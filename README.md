@@ -1,17 +1,19 @@
 # 🤖 Xeno AI — Mini CRM Agent
 
-An **AI-native Mini CRM** that lets marketers create and execute personalized campaigns through natural conversation. Built with a dual-mode agent (guided & autopilot), real-time delivery tracking, and intelligent customer segmentation.
+An **AI-native Mini CRM** that lets marketers create and execute personalized campaigns through natural conversation. Built with a structured 3-phase wizard (Brainstorm → Plan → Execute), real-time delivery tracking, and intelligent customer segmentation.
 
 ## ✨ Features
 
-- **Chat-First Interface** — Create campaigns by describing your goal in plain English
-- **Dual-Mode Agent** — *Guided* (review each step) or *Autopilot* (AI handles it, you confirm the send)
-- **AI-Powered Segmentation** — Natural language → intelligent audience filtering with AI-generated SQL
-- **Multi-Channel Delivery** — WhatsApp, SMS, Email, RCS (simulated with realistic callbacks)
-- **Real-Time Tracking** — Live delivery events streaming via SSE (sent → delivered → opened → clicked)
-- **Campaign Analytics** — Delivery funnel, channel breakdown, performance metrics
+- **Chat-First Interface** — Brainstorm campaigns by describing your target and offer in plain English.
+- **3-Phase Studio Wizard** — Smooth transition from *Brainstorming* (conversational segment/channel exploration) to *Plan Review* (inspect generated SQL, audience size, copy templates) to *Autonomous Execution* (real-time progress tracking).
+- **AI-Powered Segmentation** — Natural language → intelligent audience filtering with AI-generated SQL (validated by `SQLGuard`).
+- **Multi-Channel Delivery** — WhatsApp, SMS, Email, RCS (simulated with realistic callbacks, strictly emoji-free).
+- **Real-Time Tracking** — Live delivery events streaming via SSE (sent → delivered → opened → clicked).
+- **Campaign Analytics** — Delivery funnel, channel breakdown, and performance metrics updated in real-time.
 
 ## 🏗 Architecture
+
+Detailed layout and architectural choices are documented in [architecture.md](file:///d:/AI/AIML/SUNRISE%20COUNTDOWN/ai-craftsman-portfolio/projects/XENO%20assignment/xeno-ai-crm/architecture.md).
 
 ```
 ┌────────────┐     ┌──────────────┐     ┌──────────────────┐
@@ -27,9 +29,9 @@ An **AI-native Mini CRM** that lets marketers create and execute personalized ca
 ```
 
 **Three-service design:**
-- **Frontend** — React + TypeScript, glassmorphism UI, SSE streaming
-- **CRM Service** — FastAPI, LangGraph agent, dual LLM (Gemini + Groq)
-- **Channel Service** — Stub that simulates delivery and fires webhook callbacks
+- **Frontend** — React + TypeScript, glassmorphism UI, SSE streaming.
+- **CRM Service** — FastAPI, stateful LangGraph agent, dual LLM (Gemini + Groq model cycling fallback).
+- **Channel Service** — Stub that simulates delivery and fires webhook callbacks.
 
 ## 🛠 Tech Stack
 

@@ -6,13 +6,7 @@ import './App.css';
 
 type Page = 'chat' | 'dashboard';
 
-interface ChatMessage {
-  id: string;
-  type: 'user' | 'agent' | 'system' | 'interrupt' | 'step';
-  content: string;
-  data?: unknown;
-  timestamp: Date;
-}
+
 
 /* Minimal geometric spark logo */
 function LogoMark() {
@@ -40,8 +34,6 @@ function LogoMark() {
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>('chat');
-  // Lift chat messages to App level so they persist across tab switches
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   return (
     <div className="app-layout">
@@ -100,7 +92,7 @@ export default function App() {
         <div className="page-body">
           {/* Use display:none to keep both mounted but hidden, preserving state */}
           <div style={{ display: activePage === 'chat' ? 'contents' : 'none' }}>
-            <ChatPage messages={chatMessages} setMessages={setChatMessages} />
+            <ChatPage />
           </div>
           <div style={{ display: activePage === 'dashboard' ? 'contents' : 'none' }}>
             <DashboardPage />
