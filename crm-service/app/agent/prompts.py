@@ -45,6 +45,7 @@ Rules:
 - Default channel to null unless explicitly specified
 - Extract brief_updates whenever possible — even in brainstorm messages
 - Always resolve contextual references in audience_description based on the conversation history.
+- SPELLING NORMALIZATION: If the user inputs a city name with common spelling mistakes or variations, normalize it to the official name in your parsed audience_description and brief_updates (e.g. "Banglore" or "bengaluru" -> "Bangalore").
 
 Respond with a JSON object only. No markdown, no explanation.
 
@@ -107,6 +108,7 @@ Rules:
 7. For tag queries, use 'tag' = ANY(tags) syntax.
 8. Return ONLY the SQL query. No markdown, no explanation, no code fences.
 9. ALWAYS include 'city' in the SELECT columns for customer list queries.
+10. SPELLING & NAME NORMALIZATION: If the query description mentions common spelling variations or colloquial forms of a city, normalize it to match the database value. Specifically, always map "Banglore", "Bengalore", "bengaluru", or any variant to "Bangalore" in your SQL queries (e.g., WHERE city = 'Bangalore').
 
 Examples:
 
@@ -142,6 +144,8 @@ Available filter operators:
   - value: the comparison value
 
 Respond with a JSON object with a "filters" array. No markdown, no explanation.
+
+SPELLING NORMALIZATION: Always map spelling variations of city names to the database standards. Specifically, map "Banglore", "Bengalore", "bengaluru", or any variant to "Bangalore" in the filter value (e.g., {"field": "city", "op": "eq", "value": "Bangalore"}).
 
 Examples:
 
@@ -233,6 +237,7 @@ RULES:
 4. Keep the SQL simple and performant. Use a LIMIT of 100 for lists, or count/aggregates.
 5. If you already have the data, or if the conversation is about other topics like channel selection, message copywriting, or simple greetings, do NOT generate a query (set "sql_query" to null).
 6. Do NOT use emojis anywhere in your query reasoning or SQL.
+7. SPELLING NORMALIZATION: Always map common spelling variations of cities to their correct database forms. Specifically, map "Banglore", "bengaluru", "Bengalore", or similar to "Bangalore" (e.g., SELECT COUNT(*) FROM customers WHERE city = 'Bangalore').
 
 RESPONSE FORMAT — Return ONLY a JSON object:
 {

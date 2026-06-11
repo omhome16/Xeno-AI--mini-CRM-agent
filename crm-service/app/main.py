@@ -95,7 +95,18 @@ async def lifespan(app: FastAPI):
 
 
 # ── Create FastAPI Application ──
+import os
 settings = get_settings()
+
+# Export Langsmith variables to os.environ for LangChain / LangGraph automatic tracing
+if settings.LANGSMITH_TRACING:
+    os.environ["LANGSMITH_TRACING"] = settings.LANGSMITH_TRACING
+if settings.LANGSMITH_ENDPOINT:
+    os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT
+if settings.LANGSMITH_API_KEY:
+    os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+if settings.LANGSMITH_PROJECT:
+    os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
 
 app = FastAPI(
     title=settings.APP_NAME,

@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
 
+    # ── LangSmith Tracing ──
+    LANGSMITH_TRACING: str = ""
+    LANGSMITH_ENDPOINT: str = ""
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_PROJECT: str = ""
+
     # ── Service URLs ──
     CHANNEL_SERVICE_URL: str = "http://localhost:8001/api/send"
     FRONTEND_URL: str = "http://localhost:5173"
