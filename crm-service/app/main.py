@@ -67,15 +67,18 @@ async def lifespan(app: FastAPI):
                 await conn.execute(stmt)
         logger.info("✓ Database schema migrated")
 
-        # 4. Seed demo data if database is empty
-        async with pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM customers")
-        if count == 0:
-            from app.seed.seeder import seed_demo_data
-            summary = await seed_demo_data(pool)
-            logger.info(f"✓ Seeded demo data: {summary}")
+        # 4. Seed demo data if enabled and database is empty
+        if settings.SEED_DEMO_DATA:
+            async with pool.acquire() as conn:
+                count = await conn.fetchval("SELECT COUNT(*) FROM customers")
+            if count == 0:
+                from app.seed.seeder import seed_demo_data
+                summary = await seed_demo_data(pool)
+                logger.info(f"✓ Seeded demo data: {summary}")
+            else:
+                logger.info(f"✓ Database already has {count} customers — skipping seed")
         else:
-            logger.info(f"✓ Database already has {count} customers — skipping seed")
+            logger.info("✓ Automatic database seeding is disabled (SEED_DEMO_DATA=False)")
 
         # 5. Start background workers
         import asyncio

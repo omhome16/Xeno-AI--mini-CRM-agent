@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     # ── App Settings ──
     APP_NAME: str = "Xeno AI CRM"
     DEBUG: bool = False
+    SEED_DEMO_DATA: bool = False
 
     model_config = {
         "env_file": ("../.env", ".env"),

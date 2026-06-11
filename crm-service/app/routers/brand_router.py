@@ -34,16 +34,29 @@ async def get_profile():
     pool = get_main_pool()
     profile = await brand_repo.get_brand_profile(pool)
     if not profile:
-        # Return sensible default structure
+        # Return default Xeno Wear clothing brand structure
         return {
-            "brand_name": "Demo Retail Brand",
-            "niche": "Retail & D2C",
-            "product_catalog": [],
-            "outlets": [],
-            "campaign_urls": [],
-            "support_phone": "+91-9999999999",
-            "brand_tone": "Warm & Professional",
-            "custom_context": ""
+            "brand_name": "Xeno Wear",
+            "niche": "Premium Apparel & Sustainable Fashion",
+            "product_catalog": [
+                {"name": "Organic Cotton Crewneck", "price": 1850.00, "category": "Apparel", "description": "100% organic cotton comfortable daily wear shirt"},
+                {"name": "Sustainable Denim Jacket", "price": 4200.00, "category": "Apparel", "description": "Classic look jacket made from recycled wash denim"},
+                {"name": "Merino Wool Knit Sweater", "price": 3500.00, "category": "Knitwear", "description": "Super soft ethically sourced merino wool sweater"},
+                {"name": "Minimalist Canvas Sneakers", "price": 2400.00, "category": "Footwear", "description": "Eco-friendly canvas sneakers with recycled rubber soles"},
+                {"name": "Recycled Polyester Windbreaker", "price": 2900.00, "category": "Outerwear", "description": "Water-resistant light windbreaker jacket"}
+            ],
+            "outlets": [
+                {"name": "Indiranagar Flagship Outlet", "city": "Bangalore", "address": "100 Feet Road, Indiranagar, Bangalore"},
+                {"name": "Connaught Place Store", "city": "Delhi", "address": "Inner Circle, Connaught Place, New Delhi"},
+                {"name": "Colaba Causeway Boutique", "city": "Mumbai", "address": "Colaba Causeway, Mumbai"}
+            ],
+            "campaign_urls": [
+                "https://xenowear.com/collections/new-arrivals",
+                "https://xenowear.com/pages/about-us"
+            ],
+            "support_phone": "+91-8888899999",
+            "brand_tone": "Modern, Conscious, & Inspiring",
+            "custom_context": "We focus on sustainable raw materials, fair trade production practices, and minimalist design styles. Our primary target audience is young professionals who care about ecology, premium quality, and timeless styling. We are running an end-of-season sustainable campaign offering a 15% discount for orders above ₹3,000 using code ECO15."
         }
     return profile
 

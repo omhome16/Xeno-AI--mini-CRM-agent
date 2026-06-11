@@ -35,7 +35,7 @@ function LogoMark() {
 }
 
 export default function App() {
-  const [activePage, setActivePage] = useState<Page>('chat');
+  const [activePage, setActivePage] = useState<Page>('brand');
 
   const getHeaderInfo = () => {
     switch (activePage) {
@@ -69,22 +69,6 @@ export default function App() {
         </div>
 
         <button
-          className={`nav-item ${activePage === 'chat' ? 'active' : ''}`}
-          onClick={() => setActivePage('chat')}
-        >
-          <MessageSquare className="nav-icon" />
-          AI Agent
-        </button>
-
-        <button
-          className={`nav-item ${activePage === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActivePage('dashboard')}
-        >
-          <BarChart3 className="nav-icon" />
-          Dashboard
-        </button>
-
-        <button
           className={`nav-item ${activePage === 'brand' ? 'active' : ''}`}
           onClick={() => setActivePage('brand')}
         >
@@ -98,6 +82,22 @@ export default function App() {
         >
           <Database className="nav-icon" />
           Data Ingestion
+        </button>
+
+        <button
+          className={`nav-item ${activePage === 'chat' ? 'active' : ''}`}
+          onClick={() => setActivePage('chat')}
+        >
+          <MessageSquare className="nav-icon" />
+          AI Agent
+        </button>
+
+        <button
+          className={`nav-item ${activePage === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setActivePage('dashboard')}
+        >
+          <BarChart3 className="nav-icon" />
+          Dashboard
         </button>
 
         {/* Footer */}
