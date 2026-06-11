@@ -45,6 +45,7 @@ export interface Campaign {
   name: string;
   channel: string;
   status: string;
+  message_template: string;
   total_audience: number;
   total_sent: number;
   total_delivered: number;
@@ -54,6 +55,8 @@ export interface Campaign {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  segment_description?: string;
+  filter_criteria?: any;
 }
 
 export interface CampaignDetail {

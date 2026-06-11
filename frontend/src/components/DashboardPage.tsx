@@ -6,6 +6,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<CustomerStats | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedCampaignId, setExpandedCampaignId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -24,6 +25,10 @@ export default function DashboardPage() {
     }
     loadData();
   }, []);
+
+  const toggleCampaign = (id: string) => {
+    setExpandedCampaignId(prev => prev === id ? null : id);
+  };
 
   if (loading) {
     return (
@@ -117,57 +122,142 @@ export default function DashboardPage() {
         ) : (
           <div className="campaign-list">
             {campaigns.map(c => (
-              <div key={c.id} className="campaign-card glass">
-                <div className="campaign-info">
-                  <h4>{c.name}</h4>
-                  <div className="campaign-meta">
-                    <span className={`badge badge-${c.status}`}>{c.status}</span>
-                    <span>{c.channel.toUpperCase()}</span>
-                    <span>{new Date(c.created_at).toLocaleDateString()}</span>
-                  </div>
-                </div>
-                <div className="campaign-stats">
-                  <div className="mini-stat">
-                    <div className="mini-value" style={{ color: '#3b82f6' }}>
-                      <Send size={14} style={{ marginRight: 2 }} />{c.total_sent}
+              <div
+                key={c.id}
+                className={`campaign-card glass ${expandedCampaignId === c.id ? 'expanded' : ''}`}
+                onClick={() => toggleCampaign(c.id)}
+                style={{ cursor: 'pointer', transition: 'all 0.3s ease' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <div className="campaign-info">
+                    <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>{c.name}</span>
+                      <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', fontWeight: 'normal', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {expandedCampaignId === c.id ? 'Hide Details' : 'View Details'}
+                      </span>
+                    </h4>
+                    <div className="campaign-meta">
+                      <span className={`badge badge-${c.status}`}>{c.status}</span>
+                      <span>{c.channel.toUpperCase()}</span>
+                      <span>{new Date(c.created_at).toLocaleDateString()}</span>
                     </div>
-                    <div className="mini-label">Sent</div>
                   </div>
-                  <div className="mini-stat">
-                    <div className="mini-value" style={{ color: '#f97316' }}>
-                      <Eye size={14} style={{ marginRight: 2 }} />{c.total_opened}
+                  <div className="campaign-stats">
+                    <div className="mini-stat">
+                      <div className="mini-value" style={{ color: '#3b82f6' }}>
+                        <Send size={14} style={{ marginRight: 2 }} />{c.total_sent}
+                      </div>
+                      <div className="mini-label">Sent</div>
                     </div>
-                    <div className="mini-label">Opened</div>
-                  </div>
-                  <div className="mini-stat">
-                    <div className="mini-value" style={{ color: '#22c55e' }}>
-                      <MousePointerClick size={14} style={{ marginRight: 2 }} />{c.total_clicked}
+                    <div className="mini-stat">
+                      <div className="mini-value" style={{ color: '#f97316' }}>
+                        <Eye size={14} style={{ marginRight: 2 }} />{c.total_opened}
+                      </div>
+                      <div className="mini-label">Opened</div>
                     </div>
-                    <div className="mini-label">Clicked</div>
-                  </div>
+                    <div className="mini-stat">
+                      <div className="mini-value" style={{ color: '#22c55e' }}>
+                        <MousePointerClick size={14} style={{ marginRight: 2 }} />{c.total_clicked}
+                      </div>
+                      <div className="mini-label">Clicked</div>
+                    </div>
 
-                  {/* Funnel Bar */}
-                  <div style={{ width: 120 }}>
-                    <div className="funnel-bar">
-                      <div
-                        className="fill delivered"
-                        style={{ width: `${c.total_sent ? (c.total_delivered / c.total_sent * 100) : 0}%` }}
-                      />
-                    </div>
-                    <div className="funnel-bar">
-                      <div
-                        className="fill opened"
-                        style={{ width: `${c.total_delivered ? (c.total_opened / c.total_delivered * 100) : 0}%` }}
-                      />
-                    </div>
-                    <div className="funnel-bar">
-                      <div
-                        className="fill clicked"
-                        style={{ width: `${c.total_delivered ? (c.total_clicked / c.total_delivered * 100) : 0}%` }}
-                      />
+                    {/* Funnel Bar */}
+                    <div style={{ width: 120 }}>
+                      <div className="funnel-bar">
+                        <div
+                          className="fill delivered"
+                          style={{ width: `${c.total_sent ? (c.total_delivered / c.total_sent * 100) : 0}%` }}
+                        />
+                      </div>
+                      <div className="funnel-bar">
+                        <div
+                          className="fill opened"
+                          style={{ width: `${c.total_delivered ? (c.total_opened / c.total_delivered * 100) : 0}%` }}
+                        />
+                      </div>
+                      <div className="funnel-bar">
+                        <div
+                          className="fill clicked"
+                          style={{ width: `${c.total_delivered ? (c.total_clicked / c.total_delivered * 100) : 0}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                {/* Expanded Details Section */}
+                {expandedCampaignId === c.id && (
+                  <div
+                    className="campaign-details-expanded"
+                    style={{
+                      marginTop: '20px',
+                      paddingTop: '20px',
+                      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                      width: '100%',
+                      textAlign: 'left'
+                    }}
+                    onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details content
+                  >
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '16px' }}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
+                          Target Audience Segment
+                        </div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-primary)', background: 'rgba(255, 255, 255, 0.04)', padding: '10px 14px', borderRadius: '8px', borderLeft: '3px solid #3b82f6', lineHeight: '1.5' }}>
+                          {c.segment_description || 'No description available'}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
+                          Parameters
+                        </div>
+                        <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(255, 255, 255, 0.04)', padding: '10px 14px', borderRadius: '8px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Audience Size:</span>
+                            <span style={{ fontWeight: 600 }}>{c.total_audience.toLocaleString()} customers</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Channel:</span>
+                            <span style={{ fontWeight: 600 }}>{(c.channel || 'WhatsApp').toUpperCase()}</span>
+                          </div>
+                          {c.filter_criteria?.filters && c.filter_criteria.filters.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '6px' }}>
+                              <span style={{ color: 'var(--text-secondary)', fontSize: '11.5px' }}>Database Filters:</span>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                                {c.filter_criteria.filters.map((f: any, idx: number) => (
+                                  <span key={idx} className="glass-subtle" style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                    {f.field} {f.op} {String(f.value)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
+                        Message Copy Template
+                      </div>
+                      <pre style={{
+                        padding: '14px 16px',
+                        borderRadius: '8px',
+                        background: 'rgba(0, 0, 0, 0.15)',
+                        borderLeft: '3px solid var(--orange-400)',
+                        fontSize: '12.5px',
+                        lineHeight: '1.6',
+                        color: 'var(--text-secondary)',
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'inherit',
+                        margin: 0
+                      }}>
+                        {c.message_template}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

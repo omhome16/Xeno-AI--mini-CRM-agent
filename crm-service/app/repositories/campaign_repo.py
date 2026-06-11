@@ -68,7 +68,15 @@ async def create_campaign(
 async def get_campaign(pool: asyncpg.Pool, campaign_id: UUID) -> Optional[dict]:
     """Fetch a campaign by ID."""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM campaigns WHERE id = $1", campaign_id)
+        row = await conn.fetchrow(
+            """
+            SELECT c.*, s.description as segment_description, s.filter_criteria
+            FROM campaigns c
+            LEFT JOIN segments s ON c.segment_id = s.id
+            WHERE c.id = $1
+            """,
+            campaign_id
+        )
         return dict(row) if row else None
 
 
@@ -76,7 +84,14 @@ async def get_campaigns(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
     """Fetch all campaigns, most recent first."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM campaigns ORDER BY created_at DESC LIMIT $1", limit
+            """
+            SELECT c.*, s.description as segment_description, s.filter_criteria
+            FROM campaigns c
+            LEFT JOIN segments s ON c.segment_id = s.id
+            ORDER BY c.created_at DESC
+            LIMIT $1
+            """,
+            limit
         )
     return [dict(r) for r in rows]
 

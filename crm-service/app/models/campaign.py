@@ -28,6 +28,8 @@ class CampaignResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    segment_description: Optional[str] = None
+    filter_criteria: Optional[dict] = None
 
 
 class CampaignListResponse(BaseModel):
