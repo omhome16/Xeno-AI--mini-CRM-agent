@@ -91,12 +91,12 @@ async def dispatch_campaign(
         })
 
     # Send in batches
-    for i in range(0, total, BATCH_SIZE):
-        batch = comms[i:i + BATCH_SIZE]
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_S) as client:
+        for i in range(0, total, BATCH_SIZE):
+            batch = comms[i:i + BATCH_SIZE]
 
-        for comm in batch:
-            try:
-                async with httpx.AsyncClient(timeout=SEND_TIMEOUT_S) as client:
+            for comm in batch:
+                try:
                     response = await client.post(
                         settings.CHANNEL_SERVICE_URL,
                         json={
@@ -120,9 +120,9 @@ async def dispatch_campaign(
                             f"status={response.status_code}"
                         )
 
-            except Exception as e:
-                failed += 1
-                logger.error(f"Failed to dispatch comm={str(comm['id'])[:8]}: {e}")
+                except Exception as e:
+                    failed += 1
+                    logger.error(f"Failed to dispatch comm={str(comm['id'])[:8]}: {e}")
 
         # Progress update
         progress = min(100, round((i + len(batch)) / total * 100))

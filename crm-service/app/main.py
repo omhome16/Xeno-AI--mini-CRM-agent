@@ -3,7 +3,7 @@ Xeno AI CRM Service — Main Application Entry Point.
 
 This is the core CRM backend that handles:
   - Customer and order data ingestion
-  - AI agent chat interface (LangGraph + Gemini/Groq)
+  - AI agent chat interface (LangGraph + Groq)
   - Campaign management and execution
   - Delivery receipt processing (idempotent callbacks)
   - Real-time analytics via SSE

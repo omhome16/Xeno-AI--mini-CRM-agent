@@ -53,7 +53,7 @@ async def fire_callback(
             async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
                 response = await client.post(url, json=payload)
 
-                if response.status_code == 200:
+                if response.status_code in (200, 201, 202):
                     return True  # Success
 
                 elif response.status_code == 409:

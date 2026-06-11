@@ -57,6 +57,11 @@ class CampaignState(TypedDict, total=False):
     communications_created: int # Number of comm records created
 
     # ── Agent Internal ──
+    think_pad: str              # Agent's internal Chain of Thought reasoning
+    tool_to_call: str           # Name of the tool the agent wants to execute
+    tool_args: dict             # Arguments to pass to the tool
+    last_tool_output: str       # Result string returned by the last tool execution
+    tool_calls_count: int       # Number of tool executions in this turn to avoid infinite loops
     messages: list              # Conversation messages for context
     current_step: str           # Current workflow step
     error: Optional[str]       # Error message if something failed

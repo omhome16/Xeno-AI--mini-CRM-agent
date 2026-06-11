@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Brain } from 'lucide-react';
 import {
   startChat,
   planCampaign,
@@ -20,6 +20,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  think_pad?: string;
   suggestions?: Suggestion[];
   customerPreview?: Record<string, any>[];
   customerCount?: number;
@@ -39,6 +40,7 @@ function formatMessageContent(content: string) {
 export default function ChatPage() {
   // ── Phase state ──
   const [phase, setPhase] = useState<Phase>('brainstorm');
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   // ── Brainstorm state ──
   const [messages, setMessages] = useState<ChatMessage[]>([{
@@ -123,6 +125,7 @@ export default function ChatPage() {
             id: `ai-${Date.now()}`,
             role: 'assistant',
             content: aiResponse,
+            think_pad: data.think_pad,
             suggestions,
           }];
         });
@@ -135,6 +138,7 @@ export default function ChatPage() {
             id: `ai-${Date.now()}`,
             role: 'assistant',
             content: aiResponse,
+            think_pad: data.think_pad,
           }];
         });
         setLoading(false);
@@ -178,6 +182,7 @@ export default function ChatPage() {
             id: `ai-${Date.now()}`,
             role: 'assistant',
             content: state.ai_response,
+            think_pad: state.think_pad,
             suggestions: state.suggestions || [],
           }];
         });
@@ -230,7 +235,8 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      const { conversation_id } = await startChat(msg, 'brainstorm', getHistory(), brief);
+      const { conversation_id } = await startChat(msg, 'brainstorm', getHistory(), brief, conversationId || undefined);
+      setConversationId(conversation_id);
       connectSSE(conversation_id, handleChatSSE);
     } catch (err) {
       setMessages(prev => [...prev, {
@@ -397,6 +403,7 @@ export default function ChatPage() {
     setBrief({});
     setReadyToPlan(false);
     setPlanData(null);
+    setConversationId(null);
     setCampaignResult(null);
     setExecError(undefined);
     setTrailSteps([]);
@@ -449,6 +456,17 @@ export default function ChatPage() {
                     </div>
                     <div className="msg-body">
                       <div className="msg-content">{formatMessageContent(msg.content)}</div>
+                      {msg.think_pad && (
+                        <div className="thought-process-box">
+                          <details>
+                            <summary className="thought-summary">
+                              <Brain size={13} className="thought-icon" />
+                              <span>View Agent Thought Process</span>
+                            </summary>
+                            <div className="thought-content">{msg.think_pad}</div>
+                          </details>
+                        </div>
+                      )}
                       {msg.customerPreview && (
                         <CustomerPreviewTable preview={msg.customerPreview} totalCount={msg.customerCount || 0} />
                       )}

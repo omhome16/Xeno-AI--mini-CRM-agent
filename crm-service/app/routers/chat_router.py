@@ -114,6 +114,7 @@ async def _run_graph(
     try:
         graph = build_campaign_graph(llm_client)
 
+        logger.info(f"[_run_graph] Starting graph execution for conversation_id={conversation_id}")
         await push_event(conversation_id, "step_start", {
             "step": "Starting",
             "message": f"Processing: {state.get('user_message', '')[:100]}",
@@ -123,6 +124,7 @@ async def _run_graph(
 
         if resume_value is not None:
             from langgraph.types import Command
+            logger.info(f"[_run_graph] Resuming graph execution with input: {resume_value}")
             async for event in graph.astream(
                 Command(resume=resume_value),
                 config=config,
@@ -137,18 +139,19 @@ async def _run_graph(
         if snapshot.next:
             _conversation_states[conversation_id] = dict(snapshot.values)
             _conversation_configs[conversation_id] = config
-            logger.info(f"Graph interrupted at: {snapshot.next}")
+            logger.info(f"[_run_graph] Graph execution paused/interrupted at: {snapshot.next}")
             return
 
         # Graph completed — send result
         final_state = snapshot.values if snapshot else {}
+        logger.info(f"[_run_graph] Graph execution completed successfully for conversation_id={conversation_id}")
         await push_event(conversation_id, "result", {
             "step": "complete",
             "state": _serialize_state(final_state),
         })
 
     except Exception as e:
-        logger.error(f"Graph execution error: {e}", exc_info=True)
+        logger.error(f"[_run_graph] Graph execution error for conversation_id={conversation_id}: {e}", exc_info=True)
         await push_event(conversation_id, "error", {
             "message": f"Agent error: {str(e)[:300]}",
         })
@@ -170,9 +173,10 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
                 interrupt_data = _serialize_state(interrupt_data)
 
             await push_event(conversation_id, "interrupt", interrupt_data)
-            logger.info(f"Interrupt sent: {type(interrupt_data)}")
+            logger.info(f"[_process_graph_event] Interrupt triggered: {type(interrupt_data)}")
         else:
             # Normal node completion
+            logger.info(f"[_process_graph_event] Node '{node_name}' completed. Output keys: {list(node_output.keys()) if isinstance(node_output, dict) else type(node_output)}")
             await push_event(conversation_id, "step_complete", {
                 "step": node_name,
                 "data": _serialize_state(node_output) if isinstance(node_output, dict) else str(node_output),
@@ -232,14 +236,13 @@ async def start_chat(request: ChatRequest):
     }
 
     llm_client = DualLLMClient(
-        gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
     )
 
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="No LLM providers configured. Set GEMINI_API_KEY or GROQ_API_KEY.",
+            detail="Groq LLM provider is not configured. Set GROQ_API_KEY.",
         )
 
     asyncio.create_task(
@@ -292,12 +295,11 @@ async def plan_campaign(request: PlanRequest):
     }
 
     llm_client = DualLLMClient(
-        gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="No LLM providers configured.")
+        raise HTTPException(status_code=503, detail="Groq LLM provider is not configured.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -342,12 +344,11 @@ async def execute_campaign(request: ExecuteRequest):
     }
 
     llm_client = DualLLMClient(
-        gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="No LLM providers configured.")
+        raise HTTPException(status_code=503, detail="Groq LLM provider is not configured.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -372,14 +373,13 @@ async def improve_message(request: ImproveMessageRequest):
     """
     settings = get_settings()
     llm_client = DualLLMClient(
-        gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
     )
 
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="No LLM providers configured. Set GEMINI_API_KEY or GROQ_API_KEY.",
+            detail="Groq LLM provider is not configured. Set GROQ_API_KEY.",
         )
 
     # Prepare prompt safely replacing variables without .format() KeyError risks
@@ -428,7 +428,6 @@ async def resume_chat(request: ResumeRequest):
         )
 
     llm_client = DualLLMClient(
-        gemini_key=settings.GEMINI_API_KEY,
         groq_key=settings.GROQ_API_KEY,
     )
 

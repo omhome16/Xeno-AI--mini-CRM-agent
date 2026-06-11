@@ -53,10 +53,19 @@ async def query_customers(llm_client, audience_description: str) -> dict:
         Dict with sql, results, count, total_count.
     """
     # Step 1: Generate SQL via LLM
-    raw_sql = await llm_client.reason(
-        system_prompt=SQL_GENERATION_PROMPT,
-        user_input=audience_description,
-    )
+    try:
+        raw_sql = await llm_client.reason(
+            system_prompt=SQL_GENERATION_PROMPT,
+            user_input=audience_description,
+        )
+    except Exception as e:
+        logger.error(f"SQL generation failed due to LLM error: {e}")
+        return {
+            "error": f"Failed to translate description to SQL due to LLM error: {str(e)[:200]}",
+            "sql": "",
+            "results": [],
+            "count": 0,
+        }
 
     # Clean up LLM response (sometimes wraps in code fences)
     sql = raw_sql.strip()
@@ -154,10 +163,14 @@ async def create_segment(
     pool = get_main_pool()
 
     # Generate JSONB filter
-    filter_json = await llm_client.reason(
-        system_prompt=FILTER_GENERATION_PROMPT,
-        user_input=audience_description,
-    )
+    try:
+        filter_json = await llm_client.reason(
+            system_prompt=FILTER_GENERATION_PROMPT,
+            user_input=audience_description,
+        )
+    except Exception as e:
+        logger.error(f"Filter generation failed due to LLM error: {e}")
+        filter_json = '{"filters": [{"field": "all", "op": "eq", "value": true}]}'
 
     # Parse filter JSON
     try:
@@ -165,16 +178,20 @@ async def create_segment(
         if filter_text.startswith("```"):
             filter_text = filter_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         filter_criteria = json.loads(filter_text)
-    except json.JSONDecodeError:
+    except Exception:
         filter_criteria = {"filters": [{"field": "all", "op": "eq", "value": True}]}
         logger.warning(f"Failed to parse filter JSON, using fallback: {filter_json[:200]}")
 
     # Generate segment name
-    name = await llm_client.generate(
-        system_prompt=CAMPAIGN_NAMING_PROMPT,
-        user_input=f"Audience: {audience_description}",
-    )
-    name = name.strip().strip('"')[:100]
+    try:
+        name = await llm_client.generate(
+            system_prompt=CAMPAIGN_NAMING_PROMPT,
+            user_input=f"Audience: {audience_description}",
+        )
+        name = name.strip().strip('"')[:100]
+    except Exception as e:
+        logger.error(f"Naming generation failed due to LLM error: {e}")
+        name = f"Segment {audience_description[:30]}"
 
     # Save segment
     segment_id = await campaign_repo.create_segment(
@@ -253,14 +270,21 @@ async def generate_message(
             context_lines.append(f"Additional Context/Guidelines: {profile.get('custom_context')}")
         brand_profile_ctx = "\n".join(context_lines)
 
-    sys_prompt = MESSAGE_GENERATION_PROMPT.replace("{context}", context).replace("{brand_profile}", brand_profile_ctx)
-
-    message = await llm_client.generate(
-        system_prompt=sys_prompt,
-        user_input=context,
+    sys_prompt = MESSAGE_GENERATION_PROMPT.format(
+        context=context,
+        brand_profile=brand_profile_ctx,
     )
 
-    message = message.strip()
+    try:
+        message = await llm_client.generate(
+            system_prompt=sys_prompt,
+            user_input=context,
+        )
+        message = message.strip()
+    except Exception as e:
+        logger.error(f"Message template generation failed: {e}")
+        support_phone = profile.get('support_phone', '') if profile else ''
+        message = f"Hello {{name}}, check out our latest offers in {{city}}! Call us at {support_phone} for info."
 
     return {
         "message_template": message,

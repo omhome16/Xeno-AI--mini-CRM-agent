@@ -1,23 +1,7 @@
 """
-Dual LLM Client — Gemini (reasoning) + Groq (fast generation) with fallback.
+Groq LLM Client — Used for all agent tasks (reasoning, intent parsing, SQL generation, and message drafting).
 
-Architecture:
-  - Gemini 2.0 Flash: Used for agent reasoning, intent parsing, SQL generation
-    (structured output, schema compliance)
-  - Groq (Llama 3): Used for fast message generation (speed over reasoning depth)
-
-Fallback: If the primary provider fails (rate limit, timeout, error),
-automatically falls back to the other provider. This ensures the agent
-never fully breaks due to a single LLM provider issue.
-
-Usage:
-    client = DualLLMClient(gemini_key="...", groq_key="...")
-    
-    # For reasoning (intent parsing, SQL generation)
-    result = await client.reason("Parse this user intent", user_input)
-    
-    # For fast generation (message drafting)
-    result = await client.generate("Draft a WhatsApp message", context)
+Previously, this was a dual LLM setup, but Gemini was completely decommissioned due to reliability and rate limit issues.
 """
 
 import json
@@ -28,37 +12,18 @@ logger = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
-    """Raised when all LLM providers fail."""
+    """Raised when the LLM provider fails."""
     pass
 
 
-class DualLLMClient:
+class GroqLLMClient:
     """
-    Dual-provider LLM client with automatic fallback.
-
-    Primary providers:
-      - reason() → Gemini (structured output, complex reasoning)
-      - generate() → Groq (fast text generation)
-
-    If the primary fails, falls back to the other provider.
+    Groq LLM client (previously Dual LLM Client, refactored to use Groq exclusively).
     """
 
-    def __init__(self, gemini_key: str = "", groq_key: str = ""):
-        self._gemini_key = gemini_key
+    def __init__(self, groq_key: str = ""):
         self._groq_key = groq_key
-        self._gemini_client = None
         self._groq_client = None
-
-    def _get_gemini(self):
-        """Lazy-initialize Gemini client."""
-        if self._gemini_client is None and self._gemini_key:
-            try:
-                from google import genai
-                self._gemini_client = genai.Client(api_key=self._gemini_key)
-                logger.info("Gemini client initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini: {e}")
-        return self._gemini_client
 
     def _get_groq(self):
         """Lazy-initialize Groq client."""
@@ -78,42 +43,26 @@ class DualLLMClient:
         response_schema: Optional[dict] = None,
     ) -> str:
         """
-        Use Gemini for reasoning tasks (intent parsing, SQL generation).
-        Falls back to Groq if Gemini fails.
-
-        Args:
-            system_prompt: System instructions for the LLM.
-            user_input: The user's input to process.
-            response_schema: Optional JSON schema for structured output.
-
-        Returns:
-            LLM response text.
+        Use Groq for reasoning tasks (intent parsing, SQL generation).
         """
-        # Try Gemini first (primary for reasoning)
-        gemini = self._get_gemini()
-        if gemini:
-            try:
-                result = await self._call_gemini(system_prompt, user_input, response_schema)
-                if result:
-                    return result
-            except Exception as e:
-                logger.warning(f"Gemini reasoning failed, falling back to Groq: {e}")
-
-        # Fallback to Groq
         groq = self._get_groq()
         if groq:
             try:
+                # Only use JSON mode if response_schema is provided, or if the prompt requests JSON
+                use_json = response_schema is not None or "json" in system_prompt.lower()
+                fmt = {"type": "json_object"} if use_json else None
                 result = await self._call_groq(
                     system_prompt,
                     user_input,
-                    response_format={"type": "json_object"},
+                    response_format=fmt,
                 )
                 if result:
                     return result
             except Exception as e:
-                logger.error(f"Groq fallback also failed: {e}")
+                logger.error(f"Groq reasoning execution failed: {e}")
+                raise e
 
-        raise LLMError("All LLM providers failed for reasoning task")
+        raise LLMError("Groq provider not configured or failed for reasoning task")
 
     async def generate(
         self,
@@ -122,16 +71,7 @@ class DualLLMClient:
     ) -> str:
         """
         Use Groq for fast text generation (message drafting).
-        Falls back to Gemini if Groq fails.
-
-        Args:
-            system_prompt: System instructions for generation.
-            user_input: Context/parameters for generation.
-
-        Returns:
-            Generated text.
         """
-        # Try Groq first (primary for generation — fast)
         groq = self._get_groq()
         if groq:
             try:
@@ -139,57 +79,10 @@ class DualLLMClient:
                 if result:
                     return result
             except Exception as e:
-                logger.warning(f"Groq generation failed, falling back to Gemini: {e}")
+                logger.error(f"Groq generation failed: {e}")
+                raise e
 
-        # Fallback to Gemini
-        gemini = self._get_gemini()
-        if gemini:
-            try:
-                result = await self._call_gemini(system_prompt, user_input)
-                if result:
-                    return result
-            except Exception as e:
-                logger.error(f"Gemini fallback also failed: {e}")
-
-        raise LLMError("All LLM providers failed for generation task")
-
-    async def _call_gemini(
-        self,
-        system_prompt: str,
-        user_input: str,
-        response_schema: Optional[dict] = None,
-    ) -> Optional[str]:
-        """Call Gemini API."""
-        import asyncio
-        client = self._get_gemini()
-        if not client:
-            return None
-
-        def _sync_call():
-            from google.genai import types
-
-            config = types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3,
-                max_output_tokens=2048,
-            )
-
-            # Use structured output if schema provided
-            if response_schema:
-                config.response_mime_type = "application/json"
-                config.response_schema = response_schema
-
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=user_input,
-                config=config,
-            )
-            return response.text
-
-        # Run sync SDK in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(_sync_call)
-        logger.debug(f"Gemini response: {result[:200]}...")
-        return result
+        raise LLMError("Groq provider not configured or failed for generation task")
 
     async def _call_groq(
         self,
@@ -207,15 +100,18 @@ class DualLLMClient:
         models = [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it",
         ]
 
         def _sync_call(model_name: str, use_json_format: bool = True):
+            # Ensure "json" is present if we are requesting JSON format to avoid Groq 400 error
+            sys_prompt = system_prompt
+            if response_format and use_json_format and "json" not in sys_prompt.lower() and "json" not in user_input.lower():
+                sys_prompt += "\n\nReturn the response as a JSON object."
+
             kwargs = {
                 "model": model_name,
                 "messages": [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_input},
                 ],
                 "temperature": 0.3,
@@ -228,28 +124,42 @@ class DualLLMClient:
 
         last_error = None
         for model in models:
-            # Try with JSON formatting constraint if response_format is provided
-            try:
-                result = await asyncio.to_thread(_sync_call, model, True)
-                if result is not None:
-                    logger.debug(f"Groq ({model}) response: {result[:200]}...")
-                    return result
-            except Exception as e:
-                err_str = str(e).lower()
-                last_error = e
-                # If JSON validation failure occurs, retry this model without the response_format constraint
-                if "json" in err_str or "format" in err_str or "validate" in err_str:
-                    logger.warning(f"Groq ({model}) JSON mode failed, retrying without JSON formatting constraint: {e}")
-                    try:
-                        result = await asyncio.to_thread(_sync_call, model, False)
-                        if result is not None:
-                            logger.debug(f"Groq ({model}) response without JSON format: {result[:200]}...")
-                            return result
-                    except Exception as ex:
-                        logger.warning(f"Groq ({model}) retry without JSON format also failed: {ex}")
-                        last_error = ex
-                else:
+            for attempt in range(2):  # Try each model up to 2 times if rate limited
+                try:
+                    result = await asyncio.to_thread(_sync_call, model, True)
+                    if result is not None:
+                        logger.debug(f"Groq ({model}) response: {result[:200]}...")
+                        return result
+                except Exception as e:
+                    err_str = str(e).lower()
+                    last_error = e
+
+                    # 1. Check if it's a rate limit error (429)
+                    if "429" in err_str or "rate_limit" in err_str or "limit" in err_str or "exhaust" in err_str or "rate limit" in err_str:
+                        if attempt == 0:
+                            logger.warning(f"Groq ({model}) hit rate limit, retrying after 1.5s backoff...")
+                            await asyncio.sleep(1.5)
+                            continue  # Retry same model
+                        else:
+                            logger.warning(f"Groq ({model}) rate limit retry failed. Trying next model...")
+                            break  # Move to next model
+
+                    # 2. Check if it's a JSON formatting requirement error
+                    if "json" in err_str or "format" in err_str or "validate" in err_str:
+                        logger.warning(f"Groq ({model}) JSON mode failed, retrying without JSON formatting constraint: {e}")
+                        try:
+                            result = await asyncio.to_thread(_sync_call, model, False)
+                            if result is not None:
+                                logger.debug(f"Groq ({model}) response without JSON format: {result[:200]}...")
+                                return result
+                        except Exception as ex:
+                            logger.warning(f"Groq ({model}) retry without JSON format also failed: {ex}")
+                            last_error = ex
+                        break  # Move to next model
+
+                    # 3. For other exceptions, try the next model
                     logger.warning(f"Groq ({model}) failed: {e}. Trying next model...")
+                    break
 
         # If all models in the list failed, raise the last encountered error
         if last_error:
@@ -258,15 +168,18 @@ class DualLLMClient:
 
     @property
     def is_configured(self) -> bool:
-        """Check if at least one LLM provider is configured."""
-        return bool(self._gemini_key or self._groq_key)
+        """Check if Groq is configured."""
+        return bool(self._groq_key)
 
     @property
     def available_providers(self) -> list[str]:
         """List configured providers."""
         providers = []
-        if self._gemini_key:
-            providers.append("gemini")
         if self._groq_key:
             providers.append("groq")
         return providers
+
+
+# Alias for backward compatibility
+DualLLMClient = GroqLLMClient
+

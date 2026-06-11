@@ -22,8 +22,7 @@ from app.agent.state import CampaignState
 from app.agent.llm import DualLLMClient
 from app.agent.prompts import (
     INTENT_PARSING_PROMPT,
-    BRAINSTORM_PLANNING_PROMPT,
-    BRAINSTORM_RESPONSE_PROMPT,
+    AGENT_LOOP_PROMPT,
     GENERAL_RESPONSE_PROMPT,
 )
 from app.agent import tools as agent_tools
@@ -38,16 +37,16 @@ def _parse_json_response(text: str) -> dict:
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         import re
         match = re.search(r'(\{.*\})', text, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as inner_e:
+                raise inner_e
         logger.warning(f"Failed to parse JSON: {text[:200]}")
-        return {}
+        raise e
 
 
 async def _execute_brainstorm_query(sql: str) -> str:
@@ -94,8 +93,46 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
     Parse the user's natural language message into structured intent.
 
     Input: state.user_message, state.messages (conversation history)
-    Output: action, audience_description, message_description, channel, offer_details, brief_updates
+    Output: action, audience_description, message_description, channel, offer_details, brief_updates, think_pad
     """
+    # Bypass intent parsing if we are in plan or execute mode to preserve explicit specifications
+    if state.get("mode") in ("plan", "execute"):
+        logger.info(f"Bypassing intent parsing for mode: {state['mode']}")
+        
+        # When starting a new plan, clear previous campaign details
+        clear_fields = {}
+        if state.get("mode") == "plan":
+            clear_fields = {
+                "audience_sql": None,
+                "audience_count": None,
+                "audience_preview": None,
+                "segment_id": None,
+                "segment_name": None,
+                "filter_criteria": None,
+                "message_template": None,
+                "message_char_count": None,
+                "campaign_id": None,
+                "campaign_name": None,
+                "total_audience": None,
+                "communications_created": None,
+            }
+            
+        return {
+            "think_pad": f"Bypassing intent parsing in {state['mode']} mode.",
+            "action": state.get("action", "create_campaign"),
+            "audience_description": state.get("audience_description", ""),
+            "message_description": state.get("message_description", ""),
+            "channel": state.get("channel", "") or "",
+            "offer_details": state.get("offer_details", ""),
+            "brief_updates": state.get("brief_updates", {}),
+            "tool_calls_count": 0,
+            "last_tool_output": "No tools run yet in this turn.",
+            "tool_to_call": None,
+            "tool_args": None,
+            "current_step": "intent_parsed",
+            **clear_fields,
+        }
+
     logger.info(f"Parsing intent: {state['user_message'][:100]}...")
 
     # Build context from conversation history
@@ -124,61 +161,74 @@ async def parse_intent(state: CampaignState, llm_client: DualLLMClient) -> dict:
     elif brief_context:
         user_input = brief_context + f"\n\nCurrent message: {state['user_message']}"
 
-    result = await llm_client.reason(
-        system_prompt=INTENT_PARSING_PROMPT,
-        user_input=user_input,
-    )
-
-    intent = _parse_json_response(result)
-    if not intent:
+    try:
+        result = await llm_client.reason(
+            system_prompt=INTENT_PARSING_PROMPT,
+            user_input=user_input,
+        )
+        intent = _parse_json_response(result)
+    except Exception as e:
+        logger.error(f"Intent parsing failed: {e}")
         intent = {
-            "action": "general_chat",
-            "audience_description": None,
-            "message_description": None,
+            "think_pad": f"Failed to connect to AI reasoning service: {e}. Defaulting to brainstorm mode.",
+            "action": "brainstorm",
+            "audience_description": "",
+            "message_description": "",
             "channel": None,
             "offer_details": None,
             "brief_updates": {},
         }
 
     return {
+        "think_pad": intent.get("think_pad", "No reasoning recorded by intent parser."),
         "action": intent.get("action", "general_chat"),
         "audience_description": intent.get("audience_description", ""),
         "message_description": intent.get("message_description", ""),
         "channel": intent.get("channel", "") or "",
         "offer_details": intent.get("offer_details", ""),
         "brief_updates": intent.get("brief_updates", {}),
+        "tool_calls_count": 0,
+        "last_tool_output": "No tools run yet in this turn.",
+        "tool_to_call": None,
+        "tool_args": None,
         "current_step": "intent_parsed",
+        # Clear previous campaign execution details so they don't pollute the new turn
+        "audience_sql": None,
+        "audience_count": None,
+        "audience_preview": None,
+        "segment_id": None,
+        "segment_name": None,
+        "filter_criteria": None,
+        "message_template": None,
+        "message_char_count": None,
+        "campaign_id": None,
+        "campaign_name": None,
+        "total_audience": None,
+        "communications_created": None,
     }
 
 
-async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) -> dict:
+async def agent_loop(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
-    Generate a conversational brainstorm response with structured suggestions.
-    Uses a ReAct loop to query the database for real-time stats if needed.
-
-    Input: state.user_message, state.brief, state.messages
-    Output: ai_response, suggestions, brief_updates, ready_to_plan
+    Dynamic reasoning node. Decides whether to call a tool or compile a response.
     """
     from app.sse.manager import push_event
     conv_id = state.get("conversation_id", "")
 
-    await push_event(conv_id, "step_start", {
-        "step": "Analyzing",
-        "message": "Analyzing brief and conversation history...",
-    })
-
-    # Merge any brief_updates from intent parsing into brief
+    # Initialize counts and scratchpads
+    tool_calls = state.get("tool_calls_count", 0)
+    last_tool_output = state.get("last_tool_output", "No tools run yet in this turn.")
     brief = dict(state.get("brief", {}))
-    updates_from_intent = state.get("brief_updates", {})
-    if updates_from_intent:
-        for k, v in updates_from_intent.items():
-            if v:
-                brief[k] = v
 
-    # Format brief for prompt
-    brief_text = json.dumps(brief, indent=2) if brief else "Empty — no decisions made yet"
+    # Note: Removed the safety counter limit of 5 tool calls as requested.
 
-    # Build conversation context
+    # Merge brief updates from state
+    brief_updates = state.get("brief_updates", {}) or {}
+    for k, v in brief_updates.items():
+        if v:
+            brief[k] = v
+
+    # Build history context
     history = state.get("messages", [])
     context_parts = []
     for msg in history[-8:]:
@@ -190,264 +240,315 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
     user_input = state["user_message"]
     if context_parts:
         user_input = (
-            "Conversation so far:\n"
+            "Conversation context:\n"
             + "\n".join(context_parts)
-            + f"\n\nLatest message from marketer: {state['user_message']}"
+            + f"\n\nLatest user input: {state['user_message']}"
         )
 
-    # Step 1: Call LLM to see if it wants to query the database
-    planning_prompt = BRAINSTORM_PLANNING_PROMPT.replace("{brief}", brief_text)
-    planning_result = await llm_client.reason(
-        system_prompt=planning_prompt,
-        user_input=user_input,
-    )
-    
-    plan = _parse_json_response(planning_result)
-    sql_query = plan.get("sql_query")
-    query_results = None
+    # Construct loop prompt
+    action = state.get("action", "general_chat")
+    if action == "general_chat":
+        system_prompt = GENERAL_RESPONSE_PROMPT
+    else:
+        brief_text = json.dumps(brief, indent=2) if brief else "Empty brief"
+        brand_profile_ctx = await _get_brand_profile_context()
 
-    if sql_query:
-        await push_event(conv_id, "step_start", {
-            "step": "Database Query",
-            "message": f"Querying database: {sql_query[:60]}...",
-        })
-        query_results = await _execute_brainstorm_query(sql_query)
-        logger.info(f"Brainstorm query: {sql_query} | Results: {query_results[:200]}")
+        system_prompt = AGENT_LOOP_PROMPT.replace("{brief}", brief_text)
+        system_prompt = system_prompt.replace("{brand_profile}", brand_profile_ctx)
+        system_prompt = system_prompt.replace("{last_tool_output}", last_tool_output)
 
-    # Step 2: Generate final response
+        # Inject operational mode instructions
+        mode = state.get("mode", "brainstorm")
+        if mode == "plan":
+            system_prompt += (
+                "\n\n[CRITICAL OPERATIONAL INSTRUCTION]\n"
+                "You are in 'plan' mode. You must construct a complete campaign plan. Proceed as follows:\n"
+                "1. If you don't have the audience count yet (i.e. state.audience_count is missing or 0), call the `query_customers_db` tool using the target audience description.\n"
+                "2. If you have the audience count, but have not created/saved the segment (i.e. state.segment_id is missing or null), call the `create_saved_segment` tool.\n"
+                "3. If you have the segment_id, but have not drafted the message template (i.e. state.message_template is missing or null), call the `draft_marketing_message` tool.\n"
+                "4. Once you have segment_id AND message_template, do NOT call any more tools. Set `tool_to_call` to null and set `ready_to_plan` to true."
+            )
+        elif mode == "execute":
+            system_prompt += (
+                "\n\n[CRITICAL OPERATIONAL INSTRUCTION]\n"
+                "You are in 'execute' mode. You must launch the campaign. Proceed as follows:\n"
+                "1. Check if the campaign has been launched (i.e. state.campaign_id is set). If not, call the `execute_saved_campaign` tool with segment_id, channel, message_template, and audience_sql from the state.\n"
+                "2. Once the execution is complete (i.e. campaign_id is returned), set `tool_to_call` to null, summarize the success, and output the results."
+            )
+
+        # Append current state values for context
+        state_context = {
+            "mode": state.get("mode"),
+            "audience_sql": state.get("audience_sql"),
+            "audience_count": state.get("audience_count"),
+            "segment_id": state.get("segment_id"),
+            "segment_name": state.get("segment_name"),
+            "message_template": state.get("message_template"),
+            "campaign_id": state.get("campaign_id"),
+        }
+        state_ctx_text = json.dumps({k: v for k, v in state_context.items() if v is not None}, indent=2)
+        system_prompt += f"\n\nCURRENT GRAPH STATE VARIABLES:\n{state_ctx_text}"
+
     await push_event(conv_id, "step_start", {
-        "step": "Thinking",
-        "message": "Formulating campaign recommendations...",
+        "step": "Analyzing State",
+        "message": "AI is reasoning and planning next steps...",
     })
-    
-    brand_profile_ctx = await _get_brand_profile_context()
-    response_prompt = BRAINSTORM_RESPONSE_PROMPT.replace("{brief}", brief_text)
-    response_prompt = response_prompt.replace("{brand_profile}", brand_profile_ctx)
-    response_prompt = response_prompt.replace("{sql_query}", sql_query or "None")
-    response_prompt = response_prompt.replace("{query_results}", query_results or "No query run")
 
-    final_result = await llm_client.reason(
-        system_prompt=response_prompt,
-        user_input=user_input,
-    )
+    try:
+        result = await llm_client.reason(
+            system_prompt=system_prompt,
+            user_input=user_input,
+        )
+        parsed = _parse_json_response(result)
+    except Exception as e:
+        logger.error(f"Agent reasoning failed: {e}", exc_info=True)
+        parsed = {
+            "think_pad": f"Reasoning engine failed with error: {e}. Falling back to default response.",
+            "tool_to_call": None,
+            "tool_args": None,
+            "response": "I encountered a minor issue connecting to my reasoning engine. Let's continue setting up your campaign. What channel would you like to use?",
+            "suggestions": [
+                {"label": "WhatsApp", "value": "WhatsApp", "category": "channel"},
+                {"label": "Email", "value": "Email", "category": "channel"},
+                {"label": "SMS", "value": "SMS", "category": "channel"}
+            ],
+            "brief_updates": {},
+            "ready_to_plan": False
+        }
 
-    parsed = _parse_json_response(final_result)
-
-    # Extract structured data
-    ai_response = parsed.get("response", final_result if not parsed else "Let me help you plan a campaign!")
+    # Extract values
+    think_pad = parsed.get("think_pad", "No reasoning recorded.")
+    tool_to_call = parsed.get("tool_to_call")
+    tool_args = parsed.get("tool_args") or {}
+    response = parsed.get("response", "Let's brainstorm campaign details!")
     suggestions = parsed.get("suggestions", [])
-    new_brief_updates = parsed.get("brief_updates", {})
+    new_brief_updates = parsed.get("brief_updates", {}) or {}
     ready_to_plan = parsed.get("ready_to_plan", False)
 
-    # Merge new updates into brief
-    if new_brief_updates:
-        for k, v in new_brief_updates.items():
-            if v:
-                brief[k] = v
+    # If tool_to_call is returned but is null/none in string format
+    if isinstance(tool_to_call, str) and tool_to_call.lower() in ("null", "none"):
+        tool_to_call = None
 
-    # Auto-finish brainstorming check: require goal, audience, and channel
-    if brief.get("goal") and brief.get("audience") and brief.get("channel"):
-        ready_to_plan = True
+    # Update brief with new updates from this loop iteration
+    for k, v in new_brief_updates.items():
+        if v:
+            brief[k] = v
 
-    if ready_to_plan:
-        plan_chip = {
-            "label": "Generate Campaign Plan",
-            "value": "plan_campaign",
-            "category": "action",
-        }
-        # Avoid duplicate chips, put it first
-        filtered_suggestions = [s for s in suggestions if s.get("value") != "plan_campaign"]
-        suggestions = [plan_chip] + filtered_suggestions
+    logger.info(f"[agent_loop] Think Pad: {think_pad}")
+    if tool_to_call:
+        logger.info(f"[agent_loop] Decided to call tool: {tool_to_call} with args: {tool_args}")
 
     return {
-        "ai_response": ai_response,
+        "think_pad": think_pad,
+        "tool_to_call": tool_to_call,
+        "tool_args": tool_args,
+        "ai_response": response,
         "suggestions": suggestions,
         "brief": brief,
         "brief_updates": new_brief_updates,
         "ready_to_plan": ready_to_plan,
-        "current_step": "brainstorm_responded",
+        "current_step": "agent_loop_completed"
+    }
+
+
+async def call_tool(state: CampaignState, llm_client: DualLLMClient) -> dict:
+    """
+    Executes the tool specified by state.tool_to_call.
+    """
+    from app.sse.manager import push_event
+    conv_id = state.get("conversation_id", "")
+    tool_name = state.get("tool_to_call")
+    tool_args = state.get("tool_args") or {}
+    tool_calls = state.get("tool_calls_count", 0)
+
+    logger.info(f"[call_tool] Executing tool: {tool_name} with arguments: {tool_args}")
+
+    last_tool_output = ""
+    updates = {}
+
+    if tool_name == "query_customers_db":
+        query_desc = tool_args.get("query_description", state.get("audience_description", "all customers"))
+        await push_event(conv_id, "step_start", {
+            "step": "Database Query",
+            "message": f"Querying customer database: \"{query_desc[:60]}\"...",
+        })
+        try:
+            res = await agent_tools.query_customers(llm_client, query_desc)
+            if res.get("error"):
+                last_tool_output = f"Database query failed: {res['error']}"
+            else:
+                last_tool_output = f"Successfully queried database. Found {res['count']} customers. SQL: {res['sql']}."
+                updates = {
+                    "audience_sql": res["sql"],
+                    "audience_count": res["count"],
+                    "audience_preview": res["results"],
+                }
+        except Exception as e:
+            logger.error(f"Tool execution query_customers_db crashed: {e}")
+            last_tool_output = f"Crashed running query_customers_db: {e}"
+
+    elif tool_name == "create_saved_segment":
+        aud_desc = tool_args.get("audience_description", state.get("audience_description", "all customers"))
+        count = tool_args.get("customer_count", state.get("audience_count", 0))
+        await push_event(conv_id, "step_start", {
+            "step": "Saving Segment",
+            "message": f"Saving segment for \"{aud_desc[:60]}\" with {count} customers...",
+        })
+        try:
+            res = await agent_tools.create_segment(llm_client, aud_desc, count)
+            last_tool_output = f"Successfully saved segment with ID: {res['segment_id']}, Name: {res['name']}."
+            updates = {
+                "segment_id": res["segment_id"],
+                "segment_name": res["name"],
+                "filter_criteria": res["filter_criteria"],
+            }
+        except Exception as e:
+            logger.error(f"Tool execution create_saved_segment crashed: {e}")
+            last_tool_output = f"Crashed running create_saved_segment: {e}"
+
+    elif tool_name == "draft_marketing_message":
+        chan = tool_args.get("channel", state.get("channel", "whatsapp"))
+        aud_desc = tool_args.get("audience_description", state.get("audience_description", ""))
+        msg_desc = tool_args.get("message_description", state.get("message_description", ""))
+        offer = tool_args.get("offer_details", state.get("offer_details", ""))
+        
+        await push_event(conv_id, "step_start", {
+            "step": f"Drafting {chan.upper()} Message",
+            "message": f"Generating message draft for {chan}...",
+        })
+        try:
+            if state.get("message_template") and state.get("mode") == "execute":
+                last_tool_output = "Message template drafting skipped because custom template is already defined in state."
+            else:
+                res = await agent_tools.generate_message(llm_client, chan, aud_desc, msg_desc, offer)
+                last_tool_output = f"Successfully generated message template ({res['char_count']} characters)."
+                updates = {
+                    "message_template": res["message_template"],
+                    "message_char_count": res["char_count"],
+                }
+        except Exception as e:
+            logger.error(f"Tool execution draft_marketing_message crashed: {e}")
+            last_tool_output = f"Crashed running draft_marketing_message: {e}"
+
+    elif tool_name == "execute_saved_campaign":
+        seg_id = tool_args.get("segment_id", state.get("segment_id"))
+        chan = tool_args.get("channel", state.get("channel", "whatsapp"))
+        template = tool_args.get("message_template", state.get("message_template"))
+        aud_sql = tool_args.get("audience_sql", state.get("audience_sql"))
+        
+        if not seg_id or not template or not aud_sql:
+            last_tool_output = f"Failed to execute campaign: missing parameters (segment_id: {seg_id is not None}, message_template: {template is not None}, audience_sql: {aud_sql is not None})."
+        else:
+            await push_event(conv_id, "step_start", {
+                "step": "Executing Campaign",
+                "message": f"Creating campaign and launching communications...",
+            })
+            try:
+                campaign_name = f"{state.get('segment_name', 'Campaign')} — {chan.upper()}"
+                res = await agent_tools.execute_campaign(llm_client, seg_id, chan, template, campaign_name, aud_sql)
+                
+                if res.get("error"):
+                    last_tool_output = f"Campaign execution failed: {res['error']}"
+                else:
+                    last_tool_output = f"Successfully executed campaign. Campaign ID: {res['campaign_id']}, Total Audience: {res['total_audience']}."
+                    updates = {
+                        "campaign_id": res["campaign_id"],
+                        "campaign_name": campaign_name,
+                        "total_audience": res["total_audience"],
+                        "communications_created": res["communications_created"],
+                    }
+                    from app.services.redis_queue import push_to_queue
+                    push_to_queue("crm_dispatch_queue", {
+                        "campaign_id": res["campaign_id"],
+                        "conversation_id": conv_id
+                    })
+            except Exception as e:
+                logger.error(f"Tool execution execute_saved_campaign crashed: {e}")
+                last_tool_output = f"Crashed running execute_saved_campaign: {e}"
+
+    else:
+        last_tool_output = f"Unknown tool name: {tool_name}"
+        logger.warning(f"[call_tool] Received unknown tool name: {tool_name}")
+
+    logger.info(f"[call_tool] Execution finished. Output: {last_tool_output}")
+
+    return {
+        **updates,
+        "tool_to_call": None,
+        "tool_args": None,
+        "last_tool_output": last_tool_output,
+        "tool_calls_count": tool_calls + 1,
+        "current_step": f"tool_executed_{tool_name}" if tool_name else "tool_execution_failed",
+    }
+
+
+async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) -> dict:
+    """
+    Compile final brainstorm state.
+    """
+    logger.info("[respond_brainstorm] Compiling final brainstorm state.")
+    return {
+        "ai_response": state.get("ai_response"),
+        "suggestions": state.get("suggestions"),
+        "brief": state.get("brief"),
+        "brief_updates": state.get("brief_updates"),
+        "ready_to_plan": state.get("ready_to_plan"),
+        "think_pad": state.get("think_pad"),
+        "current_step": "brainstorm_responded"
     }
 
 
 async def respond_general(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
-    Generate a response for general chat or analytics questions.
-
-    Input: state.user_message
-    Output: ai_response
+    Compile general chat response.
     """
-    result = await llm_client.generate(
-        system_prompt=GENERAL_RESPONSE_PROMPT,
-        user_input=state["user_message"],
-    )
-
-    parsed = _parse_json_response(result)
-    ai_response = parsed.get("response", result if not parsed else "I'm here to help with your CRM campaigns!")
-
+    logger.info("[respond_general] Compiling general chat response.")
     return {
-        "ai_response": ai_response,
-        "current_step": "general_responded",
+        "ai_response": state.get("ai_response"),
+        "think_pad": state.get("think_pad"),
+        "current_step": "general_responded"
     }
 
 
 async def build_segment(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
-    Query the database to find matching customers and create a segment.
-
-    Input: state.audience_description
-    Output: audience_sql, audience_count, audience_preview, segment_id, segment_name
+    Compile final segment build results.
     """
-    from app.sse.manager import push_event
-
-    conv_id = state.get("conversation_id", "")
-    logger.info(f"Building segment for: {state.get('audience_description', '')[:100]}")
-
-    await push_event(conv_id, "step_start", {
-        "step": "Generating SQL query",
-        "message": f"Translating \"{state.get('audience_description', '')[:80]}\" to SQL...",
-    })
-
-    # Query customers via AI SQL
-    query_result = await agent_tools.query_customers(
-        llm_client, state["audience_description"]
-    )
-
-    if query_result.get("error"):
-        return {
-            "error": query_result["error"],
-            "current_step": "segment_error",
-        }
-
-    # Push SQL thinking to frontend
-    await push_event(conv_id, "step_start", {
-        "step": "SQL executed",
-        "message": f"Query: {query_result.get('sql', '')[:120]}",
-    })
-
-    if query_result["count"] == 0:
-        return {
-            "error": "No customers match this criteria. Try a broader description.",
-            "current_step": "segment_error",
-        }
-
-    await push_event(conv_id, "step_start", {
-        "step": f"Found {query_result['count']} customers",
-        "message": f"Building segment with {query_result['count']} matching customers...",
-    })
-
-    # Create and save segment
-    segment_result = await agent_tools.create_segment(
-        llm_client=llm_client,
-        audience_description=state["audience_description"],
-        customer_count=query_result["count"],
-    )
-
+    logger.info("[build_segment] Compiling final segment build results.")
     return {
-        "audience_sql": query_result["sql"],
-        "audience_count": query_result["count"],
-        "audience_preview": query_result["results"],
-        "segment_id": segment_result["segment_id"],
-        "segment_name": segment_result["name"],
-        "filter_criteria": segment_result["filter_criteria"],
-        "current_step": "segment_built",
+        "audience_sql": state.get("audience_sql"),
+        "audience_count": state.get("audience_count"),
+        "audience_preview": state.get("audience_preview"),
+        "segment_id": state.get("segment_id"),
+        "segment_name": state.get("segment_name"),
+        "filter_criteria": state.get("filter_criteria"),
+        "current_step": "segment_built"
     }
 
 
 async def draft_message(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
-    Generate a channel-appropriate marketing message.
-
-    Input: state.channel, state.audience_description, state.message_description
-    Output: message_template, message_char_count
+    Compile final message template draft.
     """
-    from app.sse.manager import push_event
-    conv_id = state.get("conversation_id", "")
-
-    # If message template is already custom drafted/edited by user, preserve it
-    custom_template = state.get("message_template")
-    if custom_template:
-        logger.info("Preserving custom message template provided in state.")
-        await push_event(conv_id, "step_start", {
-            "step": "Custom Message",
-            "message": "Using custom edited message template...",
-        })
-        return {
-            "message_template": custom_template,
-            "message_char_count": len(custom_template),
-            "current_step": "message_drafted",
-        }
-
-    channel = state.get("channel", "whatsapp") or "whatsapp"
-    logger.info(f"Drafting {channel} message...")
-
-    await push_event(conv_id, "step_start", {
-        "step": f"Drafting {channel.upper()} message",
-        "message": f"Generating personalized message for {state.get('audience_description', 'target audience')[:60]}...",
-    })
-
-    result = await agent_tools.generate_message(
-        llm_client=llm_client,
-        channel=channel,
-        audience_description=state.get("audience_description", ""),
-        message_description=state.get("message_description", ""),
-        offer_details=state.get("offer_details", ""),
-    )
-
+    logger.info("[draft_message] Compiling final message template draft.")
     return {
-        "message_template": result["message_template"],
-        "message_char_count": result["char_count"],
-        "current_step": "message_drafted",
+        "message_template": state.get("message_template"),
+        "message_char_count": state.get("message_char_count"),
+        "current_step": "message_drafted"
     }
 
 
 async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> dict:
     """
-    Execute the campaign — create records and prepare for dispatch.
-
-    Input: state.segment_id, state.channel, state.message_template, state.audience_sql
-    Output: campaign_id, total_audience, communications_created
+    Compile final campaign execution results.
     """
-    from app.sse.manager import push_event
-    conv_id = state.get("conversation_id", "")
-
-    # Generate campaign name
-    campaign_name = f"{state.get('segment_name', 'Campaign')} — {(state.get('channel', 'whatsapp') or 'whatsapp').upper()}"
-
-    logger.info(f"Executing campaign: {campaign_name}")
-
-    await push_event(conv_id, "step_start", {
-        "step": "Creating campaign",
-        "message": f"Launching \"{campaign_name}\" to {state.get('audience_count', 0)} customers...",
-    })
-
-    result = await agent_tools.execute_campaign(
-        llm_client=llm_client,
-        segment_id=state["segment_id"],
-        channel=state.get("channel", "whatsapp") or "whatsapp",
-        message_template=state["message_template"],
-        campaign_name=campaign_name,
-        audience_sql=state["audience_sql"],
-    )
-
-    if result.get("error"):
-        return {
-            "error": result["error"],
-            "current_step": "campaign_error",
-        }
-
-    # Push dispatch job to Redis queue
-    from app.services.redis_queue import push_to_queue
-    push_to_queue("crm_dispatch_queue", {
-        "campaign_id": result["campaign_id"],
-        "conversation_id": conv_id
-    })
-
+    logger.info("[execute_campaign] Compiling final campaign execution results.")
     return {
-        "campaign_id": result["campaign_id"],
-        "campaign_name": campaign_name,
-        "total_audience": result["total_audience"],
-        "communications_created": result["communications_created"],
-        "current_step": "campaign_executing",
+        "campaign_id": state.get("campaign_id"),
+        "campaign_name": state.get("campaign_name"),
+        "total_audience": state.get("total_audience"),
+        "communications_created": state.get("communications_created"),
+        "current_step": "campaign_executing"
     }
 
 

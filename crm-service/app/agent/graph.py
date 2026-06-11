@@ -44,41 +44,33 @@ _checkpointer = MemorySaver()
 
 
 def _route_after_intent(state: CampaignState) -> str:
-    """Route based on parsed intent action."""
+    """Route intent parsing directly to the dynamic agent reasoning loop."""
+    return "agent_loop"
+
+
+def _route_after_agent(state: CampaignState) -> str:
+    """Route after agent reasoning: to tool execution or to final output formatter."""
+    tool = state.get("tool_to_call")
+    if tool:
+        return "call_tool"
+
+    # If no tools are pending, route to final formatting nodes
     action = state.get("action", "general_chat")
+    mode = state.get("mode")
 
     if action == "brainstorm":
         return "respond_brainstorm"
-    elif action == "create_campaign":
-        return "build_segment"
     elif action == "query_customers":
         return "build_segment"
-    elif action in ("general_chat", "analytics"):
+    elif action == "general_chat":
         return "respond_general"
+    elif action == "create_campaign":
+        if mode == "plan":
+            return "draft_message"
+        else:
+            return "execute_campaign"
     else:
         return "respond_general"
-
-
-def _route_after_segment(state: CampaignState) -> str:
-    """Route based on segment build result and original action."""
-    step = state.get("current_step", "")
-
-    if step == "segment_error":
-        return END  # Error — stop
-
-    # For query_customers action, stop after showing results
-    if state.get("action") == "query_customers":
-        return END
-
-    # For create_campaign, continue to message drafting
-    return "draft_message"
-
-
-def _route_after_draft(state: CampaignState) -> str:
-    """Route based on whether we are in planning mode or execution mode."""
-    if state.get("mode") == "plan":
-        return END
-    return "execute_campaign"
 
 
 def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
@@ -95,6 +87,8 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
 
     # ── Register nodes (bind llm_client via partial) ──
     graph.add_node("parse_intent", partial(nodes.parse_intent, llm_client=llm_client))
+    graph.add_node("agent_loop", partial(nodes.agent_loop, llm_client=llm_client))
+    graph.add_node("call_tool", partial(nodes.call_tool, llm_client=llm_client))
     graph.add_node("respond_brainstorm", partial(nodes.respond_brainstorm, llm_client=llm_client))
     graph.add_node("respond_general", partial(nodes.respond_general, llm_client=llm_client))
     graph.add_node("build_segment", partial(nodes.build_segment, llm_client=llm_client))
@@ -103,11 +97,19 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
 
     # ── Define edges ──
     graph.add_edge(START, "parse_intent")
-    graph.add_conditional_edges("parse_intent", _route_after_intent)
+    graph.add_edge("parse_intent", "agent_loop")
+    
+    # Dynamic loop routing from agent_loop
+    graph.add_conditional_edges("agent_loop", _route_after_agent)
+    
+    # Loop back from tool execution
+    graph.add_edge("call_tool", "agent_loop")
+    
+    # Terminal responses go to END
     graph.add_edge("respond_brainstorm", END)
     graph.add_edge("respond_general", END)
-    graph.add_conditional_edges("build_segment", _route_after_segment)
-    graph.add_conditional_edges("draft_message", _route_after_draft)
+    graph.add_edge("build_segment", END)
+    graph.add_edge("draft_message", END)
     graph.add_edge("execute_campaign", END)
 
     return graph.compile(checkpointer=_checkpointer)

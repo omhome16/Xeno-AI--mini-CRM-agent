@@ -1209,6 +1209,64 @@ body::before {
 .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
 .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 
+/* ── Thought Process Box ── */
+.thought-process-box {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(234, 88, 12, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  transition: all var(--transition-fast);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.thought-process-box:hover {
+  border-color: rgba(234, 88, 12, 0.45);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.thought-process-box details {
+  padding: 8px 12px;
+}
+
+.thought-process-box summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--orange-600);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.thought-process-box summary::-webkit-details-marker {
+  display: none;
+}
+
+.thought-process-box details[open] summary {
+  border-bottom: 1px solid rgba(234, 88, 12, 0.08);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
+.thought-icon {
+  color: var(--orange-500);
+  flex-shrink: 0;
+}
+
+.thought-content {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--warm-700);
+  white-space: pre-wrap;
+  font-family: monospace;
+}
+
 /* ── Chat Input Bar ── */
 .chat-input-bar {
   margin: 0 0 12px;

@@ -25,6 +25,8 @@ class CampaignResponse(BaseModel):
     total_failed: int = 0
     total_opened: int = 0
     total_clicked: int = 0
+    total_conversions: int = 0
+    total_attributed_revenue: float = 0.0
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

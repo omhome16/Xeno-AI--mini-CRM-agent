@@ -44,17 +44,14 @@ Instead of running a linear pipeline, the agent's brain is modeled as a stateful
 - **State Checkpointing**: The graph's state is preserved in Redis after each node executes. This enables complete crash recovery and allows the backend to resume interrupted graphs safely.
 - **Preview Re-routing Guard**: During the **Plan Review** phase, the graph executes in `plan` mode. We implement a conditional routing edge `_route_after_draft` that terminates the graph run before the `execute_campaign` node is reached. This guarantees that campaign rows are *never* pre-created in the database during planning, eliminating duplicate campaign errors.
 
-### 2. Dual-LLM Strategy with Prioritized Model Cycling
-To optimize for both speed and reasoning depth, the backend segregates tasks between two providers:
-- **Gemini 2.0 Flash (Primary Reasoning)**: Utilized for intent parsing, SQL query building, and segment rule compilation.
-- **Groq Llama 3 (Fast Message Generation & Fallback)**: Drafts channel marketing copy and serves as a highly resilient reasoning fallback.
-- **Resilient Fallback Pipeline**: If Gemini or the primary Groq model throws rate limits (`429`) or errors, the backend automatically cycles through a prioritized pool of 6 alternative models:
+### 2. LLM Strategy with Prioritized Model Cycling
+To optimize for speed and reasoning depth, the backend uses Groq exclusively:
+- **Groq LLM Client**: Utilized for intent parsing, SQL query building, segment rule compilation, and drafting channel marketing copy.
+- **Resilient Fallback Pipeline**: If the primary Groq model throws rate limits (`429`) or errors, the backend automatically cycles through a prioritized pool of alternative models:
   1. `llama-3.3-70b-versatile`
-  2. `llama-3.1-70b-versatile`
-  3. `llama3-70b-8192`
-  4. `llama-3.1-8b-instant`
-  5. `llama3-8b-8192`
-  6. `mixtral-8x7b-32768`
+  2. `llama-3.1-8b-instant`
+  3. `mixtral-8x7b-32768`
+  4. `gemma2-9b-it`
 - **JSON Formatting Constraint Fallback**: Groq JSON mode requires the word "json" to be present in the prompt. If a model fails with a JSON validation error, the client retries the request without the JSON format constraint to ensure the agent never crashes.
 
 ### 3. Real-Time SSE Event Stream
@@ -186,7 +183,7 @@ cd Xeno-AI--mini-CRM-agent
 
 # Create environment template
 cp .env.example .env
-# Edit .env with your GEMINI_API_KEY and GROQ_API_KEY
+# Edit .env with your GROQ_API_KEY
 ```
 
 ### 3. Spin Up Infrastructure (PostgreSQL & Redis)
