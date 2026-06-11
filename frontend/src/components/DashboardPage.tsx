@@ -193,40 +193,46 @@ export default function DashboardPage() {
                     style={{
                       marginTop: '20px',
                       paddingTop: '20px',
-                      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderTop: '1px solid rgba(255, 255, 255, 0.08)',
                       width: '100%',
-                      textAlign: 'left'
+                      textAlign: 'left',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '16px'
                     }}
                     onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details content
                   >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '16px' }}>
-                      <div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                      {/* Audience info card */}
+                      <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
                           Target Audience Segment
                         </div>
-                        <div style={{ fontSize: '13px', color: 'var(--text-primary)', background: 'rgba(255, 255, 255, 0.04)', padding: '10px 14px', borderRadius: '8px', borderLeft: '3px solid #3b82f6', lineHeight: '1.5' }}>
+                        <div style={{ fontSize: '13.5px', color: 'var(--text-primary)', fontWeight: '600', lineHeight: '1.5' }}>
                           {c.segment_description || 'No description available'}
                         </div>
                       </div>
-                      <div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
-                          Parameters
+
+                      {/* Parameters card */}
+                      <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                          Campaign Parameters
                         </div>
-                        <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(255, 255, 255, 0.04)', padding: '10px 14px', borderRadius: '8px' }}>
+                        <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>Audience Size:</span>
-                            <span style={{ fontWeight: 600 }}>{c.total_audience.toLocaleString()} customers</span>
+                            <span style={{ color: 'var(--text-muted)' }}>Audience Size:</span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.total_audience.toLocaleString()} customers</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>Channel:</span>
-                            <span style={{ fontWeight: 600 }}>{(c.channel || 'WhatsApp').toUpperCase()}</span>
+                            <span style={{ color: 'var(--text-muted)' }}>Channel:</span>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{(c.channel || 'WhatsApp').toUpperCase()}</span>
                           </div>
                           {c.filter_criteria?.filters && c.filter_criteria.filters.length > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '6px' }}>
-                              <span style={{ color: 'var(--text-secondary)', fontSize: '11.5px' }}>Database Filters:</span>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                            <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Filters Applied:</span>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                 {c.filter_criteria.filters.map((f: any, idx: number) => (
-                                  <span key={idx} className="glass-subtle" style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                  <span key={idx} className="glass-subtle" style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
                                     {f.field} {f.op} {String(f.value)}
                                   </span>
                                 ))}
@@ -237,18 +243,20 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    <div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '6px' }}>
+                    {/* Message content card */}
+                    <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
                         Message Copy Template
                       </div>
                       <pre style={{
                         padding: '14px 16px',
                         borderRadius: '8px',
-                        background: 'rgba(0, 0, 0, 0.15)',
+                        background: 'rgba(255, 255, 255, 0.55)',
+                        border: '1px solid rgba(255, 255, 255, 0.25)',
                         borderLeft: '3px solid var(--orange-400)',
-                        fontSize: '12.5px',
+                        fontSize: '13px',
                         lineHeight: '1.6',
-                        color: 'var(--text-secondary)',
+                        color: 'var(--text-primary)',
                         whiteSpace: 'pre-wrap',
                         fontFamily: 'inherit',
                         margin: 0

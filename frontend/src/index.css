@@ -627,27 +627,28 @@ body::before {
 }
 
 .interrupt-card .message-preview {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: var(--radius-sm);
   padding: 16px 18px;
   font-size: 13.5px;
   line-height: 1.7;
   white-space: pre-wrap;
   border-left: 3px solid var(--orange-400);
-  color: var(--text-on-glass);
+  color: var(--text-primary);
 }
 
 .interrupt-card textarea {
   width: 100%;
   padding: 14px 16px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   font-family: inherit;
   font-size: 13.5px;
   resize: vertical;
   min-height: 100px;
   outline: none;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.55);
   color: var(--text-primary);
   transition: border-color var(--transition-fast);
 }
@@ -726,11 +727,17 @@ body::before {
 .campaign-card {
   padding: 20px 24px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   transition: all var(--transition-fast);
   cursor: pointer;
 }
+
+.campaign-card.expanded {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 
 .campaign-card:hover {
   transform: translateY(-2px);
@@ -1656,11 +1663,12 @@ body::before {
 .plan-message-preview {
   padding: 14px 16px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-left: 3px solid var(--orange-400);
   font-size: 13px;
   line-height: 1.7;
-  color: var(--text-on-glass);
+  color: var(--text-primary);
   white-space: pre-wrap;
 }
 
@@ -1669,8 +1677,8 @@ body::before {
   min-height: 120px;
   padding: 14px 16px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-left: 3px solid var(--orange-400);
   font-size: 13px;
   line-height: 1.7;
@@ -1684,7 +1692,7 @@ body::before {
 
 .plan-message-textarea:focus {
   border-color: var(--orange-400);
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.65);
 }
 
 .plan-action-btn {
