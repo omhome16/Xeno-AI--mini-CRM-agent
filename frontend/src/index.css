@@ -1206,7 +1206,7 @@ body::before {
   margin: 0 0 12px;
   padding: 6px 6px 6px 20px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   border-radius: var(--radius-xl);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -1228,6 +1228,12 @@ body::before {
   outline: none;
   color: var(--text-primary);
   letter-spacing: -0.01em;
+  resize: none;
+  min-height: 20px;
+  max-height: 120px;
+  line-height: 1.4;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .chat-input-bar .chat-input::placeholder {

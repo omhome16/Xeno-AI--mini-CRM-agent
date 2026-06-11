@@ -73,7 +73,7 @@ export default function ChatPage() {
   const [execError, setExecError] = useState<string | undefined>();
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-scroll
   useEffect(() => {
@@ -86,6 +86,15 @@ export default function ChatPage() {
       inputRef.current?.focus();
     }
   }, [phase, loading]);
+
+  // Auto-adjust textarea height based on typing input
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+    }
+  }, [input]);
 
   // ── Build history for API calls ──
   const getHistory = useCallback(() => {
@@ -466,15 +475,20 @@ export default function ChatPage() {
 
               {/* Input bar */}
               <div className="chat-input-bar glass">
-                <input
+                <textarea
                   ref={inputRef}
-                  type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSend()}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
                   placeholder={loading ? 'AI is thinking...' : 'Describe your campaign idea...'}
                   disabled={loading || phase === 'planning'}
                   className="chat-input"
+                  rows={1}
                 />
                 <button
                   className="chat-send-btn"
