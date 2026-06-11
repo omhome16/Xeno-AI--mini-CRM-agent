@@ -76,7 +76,7 @@ def main():
         if archetype == "vip":
             tags = ["vip", "high_value", random.choice(["fashion", "premium"])]
         elif archetype == "active":
-            tags = ["regular", random.choice(["fashion", "grocery"])]
+            tags = ["regular", random.choice(["fashion", "apparel"])]
         elif archetype == "lapsed":
             tags = ["lapsed", "budget"]
         elif archetype == "new":

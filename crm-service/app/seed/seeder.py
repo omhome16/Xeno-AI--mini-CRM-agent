@@ -34,7 +34,7 @@ CITIES = {
 # ── Customer Tags ──
 TAGS_POOL = [
     "vip", "regular", "new", "lapsed", "high_value", "budget",
-    "electronics", "fashion", "grocery", "fitness",
+    "apparel", "fashion", "sustainable",
     "whatsapp_opted", "email_opted", "sms_opted",
 ]
 
@@ -53,7 +53,7 @@ def _generate_customer(archetype: str) -> dict:
 
     tags = []
     if archetype == "vip":
-        tags = ["vip", "high_value", random.choice(["electronics", "fashion"])]
+        tags = ["vip", "high_value", random.choice(["apparel", "fashion"])]
     elif archetype == "active":
         tags = ["regular", random.choice(["whatsapp_opted", "email_opted"])]
     elif archetype == "lapsed":
