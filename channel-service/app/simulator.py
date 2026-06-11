@@ -124,6 +124,37 @@ async def simulate_delivery(
                 "idempotency_key": f"{communication_id}-clicked-{uuid4().hex[:8]}",
             })
             logger.info(f"[{communication_id[:8]}] CLICKED")
+        else:
+            return  # User didn't click
+
+        # ── Step 5: CONVERTED (10% of clicked) ──
+        if random.random() < 0.10:
+            await asyncio.sleep(random.uniform(0.5, 3.0))
+            order_val = round(random.uniform(450.0, 4500.0), 2)
+            categories = ["Fashion", "Electronics", "Groceries", "Home Decor", "Beauty"]
+            products = {
+                "Fashion": ["Leather Jacket", "Designer Jeans", "Casual Sneakers", "Silk Scarf"],
+                "Electronics": ["Wireless Earbuds", "Smart Watch", "Power Bank", "Bluetooth Speaker"],
+                "Groceries": ["Organic Coffee Blend", "Gourmet Chocolates", "Extra Virgin Olive Oil"],
+                "Home Decor": ["Scented Candle Set", "Ceramic Flower Vase", "Decorative Wall Art"],
+                "Beauty": ["Hydrating Serum", "Matte Lipstick Set", "Essential Oil Diffuser"]
+            }
+            cat = random.choice(categories)
+            prod = random.choice(products[cat])
+
+            await fire_callback(callback_url, {
+                "communication_id": communication_id,
+                "event_type": "converted",
+                "timestamp": _now_iso(),
+                "event_data": {
+                    "order_value": order_val,
+                    "category": cat,
+                    "product_name": prod,
+                    "items_count": random.randint(1, 3)
+                },
+                "idempotency_key": f"{communication_id}-converted-{uuid4().hex[:8]}",
+            })
+            logger.info(f"[{communication_id[:8]}] CONVERTED: order_value={order_val}")
 
     except asyncio.CancelledError:
         logger.warning(f"[{communication_id[:8]}] Simulation cancelled")

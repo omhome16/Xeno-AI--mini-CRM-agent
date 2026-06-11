@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { MessageSquare, BarChart3 } from 'lucide-react';
+import { MessageSquare, BarChart3, Store, Database } from 'lucide-react';
 import ChatPage from './components/ChatPage';
 import DashboardPage from './components/DashboardPage';
+import BrandProfilePage from './components/BrandProfilePage';
+import DataIngestionPage from './components/DataIngestionPage';
 import './App.css';
 
-type Page = 'chat' | 'dashboard';
+type Page = 'chat' | 'dashboard' | 'brand' | 'ingest';
 
 
 
@@ -34,6 +36,23 @@ function LogoMark() {
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>('chat');
+
+  const getHeaderInfo = () => {
+    switch (activePage) {
+      case 'chat':
+        return { title: 'AI Campaign Agent', subtitle: 'Natural language \u2192 campaigns' };
+      case 'dashboard':
+        return { title: 'Campaign Dashboard', subtitle: 'Analytics & performance' };
+      case 'brand':
+        return { title: 'Brand Profile Hub', subtitle: 'Configure brand niche, catalogs, and tone' };
+      case 'ingest':
+        return { title: 'Data Ingestion Portal', subtitle: 'Ingest customer books and purchase history' };
+      default:
+        return { title: 'Xeno CRM', subtitle: '' };
+    }
+  };
+
+  const header = getHeaderInfo();
 
   return (
     <div className="app-layout">
@@ -65,6 +84,22 @@ export default function App() {
           Dashboard
         </button>
 
+        <button
+          className={`nav-item ${activePage === 'brand' ? 'active' : ''}`}
+          onClick={() => setActivePage('brand')}
+        >
+          <Store className="nav-icon" />
+          Brand Profile
+        </button>
+
+        <button
+          className={`nav-item ${activePage === 'ingest' ? 'active' : ''}`}
+          onClick={() => setActivePage('ingest')}
+        >
+          <Database className="nav-icon" />
+          Data Ingestion
+        </button>
+
         {/* Footer */}
         <div className="sidebar-footer">
           <div className="sidebar-footer-card">
@@ -82,20 +117,24 @@ export default function App() {
       <main className="main-content">
         <header className="page-header">
           <div style={{ display: 'flex', alignItems: 'baseline' }}>
-            <h2>{activePage === 'chat' ? 'AI Campaign Agent' : 'Campaign Dashboard'}</h2>
-            <span className="header-subtitle">
-              {activePage === 'chat' ? 'Natural language \u2192 campaigns' : 'Analytics & performance'}
-            </span>
+            <h2>{header.title}</h2>
+            <span className="header-subtitle">{header.subtitle}</span>
           </div>
         </header>
 
         <div className="page-body">
-          {/* Use display:none to keep both mounted but hidden, preserving state */}
+          {/* Use display:none to keep all mounted but hidden, preserving state */}
           <div style={{ display: activePage === 'chat' ? 'contents' : 'none' }}>
             <ChatPage />
           </div>
           <div style={{ display: activePage === 'dashboard' ? 'contents' : 'none' }}>
             <DashboardPage />
+          </div>
+          <div style={{ display: activePage === 'brand' ? 'contents' : 'none' }}>
+            <BrandProfilePage />
+          </div>
+          <div style={{ display: activePage === 'ingest' ? 'contents' : 'none' }}>
+            <DataIngestionPage />
           </div>
         </div>
       </main>

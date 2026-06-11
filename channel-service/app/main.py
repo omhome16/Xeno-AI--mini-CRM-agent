@@ -76,9 +76,18 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME}...")
     logger.info(f"  CRM callback URL: {settings.CRM_RECEIPT_URL}")
+    
+    # Start background simulation worker
+    import asyncio
+    from app.workers.simulation_worker import start_simulation_worker
+    app.state.simulation_worker_task = asyncio.create_task(start_simulation_worker(), name="simulation_worker")
+    logger.info("✓ Simulation worker started")
+    
     logger.info(f"✓ {settings.APP_NAME} ready — accepting send requests")
     yield
-    # Graceful shutdown: cancel all running simulations
+    # Graceful shutdown: cancel worker and simulations
+    if hasattr(app.state, "simulation_worker_task"):
+        app.state.simulation_worker_task.cancel()
     cancelled = await cancel_all_simulations()
     logger.info(f"✓ {settings.APP_NAME} shutdown complete ({cancelled} simulations cancelled)")
 
@@ -146,13 +155,14 @@ async def send_message(request: SendRequest) -> SendResponse:
             detail=f"Invalid channel '{request.channel}'. Must be one of: {valid_channels}",
         )
 
-    # Schedule async delivery simulation
-    schedule_delivery(
-        communication_id=request.communication_id,
-        recipient=request.recipient.model_dump(),
-        message=request.message,
-        channel=request.channel.lower(),
-    )
+    # Push to Redis queue for async processing
+    from app.services.redis_queue import push_to_queue
+    push_to_queue("channel_simulation_queue", {
+        "communication_id": request.communication_id,
+        "recipient": request.recipient.model_dump(),
+        "message": request.message,
+        "channel": request.channel.lower(),
+    })
 
     logger.info(
         f"Accepted send request: comm={request.communication_id[:8]}... "

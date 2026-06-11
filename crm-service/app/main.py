@@ -77,8 +77,13 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"✓ Database already has {count} customers — skipping seed")
 
-        # 5. Redis will be added in Phase 7
-        # app.state.redis = Redis.from_url(settings.REDIS_URL)
+        # 5. Start background workers
+        import asyncio
+        from app.workers.dispatch_worker import start_dispatch_worker
+        from app.workers.receipt_worker import start_receipt_worker
+        app.state.dispatch_worker_task = asyncio.create_task(start_dispatch_worker(), name="dispatch_worker")
+        app.state.receipt_worker_task = asyncio.create_task(start_receipt_worker(), name="receipt_worker")
+        logger.info("✓ Background queue workers started")
 
         logger.info(f"✓ {settings.APP_NAME} started successfully")
 
@@ -90,6 +95,10 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ──
     logger.info(f"Shutting down {settings.APP_NAME}...")
+    if hasattr(app.state, "dispatch_worker_task"):
+        app.state.dispatch_worker_task.cancel()
+    if hasattr(app.state, "receipt_worker_task"):
+        app.state.receipt_worker_task.cancel()
     await close_db()
     logger.info("✓ Shutdown complete")
 
@@ -161,9 +170,13 @@ from app.routers.order_router import router as order_router
 from app.routers.receipt_router import router as receipt_router
 from app.routers.campaign_router import router as campaign_router
 from app.routers.chat_router import router as chat_router
+from app.routers.brand_router import router as brand_router
+from app.routers.ingest_router import router as ingest_router
 
 app.include_router(customer_router)
 app.include_router(order_router)
 app.include_router(receipt_router)
 app.include_router(campaign_router)
 app.include_router(chat_router)
+app.include_router(brand_router)
+app.include_router(ingest_router)

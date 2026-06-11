@@ -121,127 +121,180 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="campaign-list">
-            {campaigns.map(c => (
-              <div
-                key={c.id}
-                className={`campaign-card glass ${expandedCampaignId === c.id ? 'expanded' : ''}`}
-                onClick={() => toggleCampaign(c.id)}
-                style={{ cursor: 'pointer', transition: 'all 0.3s ease' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                  <div className="campaign-info">
-                    <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>{c.name}</span>
-                      <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', fontWeight: 'normal', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        {expandedCampaignId === c.id ? 'Hide Details' : 'View Details'}
-                      </span>
-                    </h4>
-                    <div className="campaign-meta">
-                      <span className={`badge badge-${c.status}`}>{c.status}</span>
-                      <span>{c.channel.toUpperCase()}</span>
-                      <span>{new Date(c.created_at).toLocaleDateString()}</span>
+            {campaigns.map(c => {
+              const channelCostPerMessage = (channel: string) => {
+                const ch = (channel || '').toLowerCase();
+                if (ch === 'email') return 0.05;
+                if (ch === 'rcs') return 0.30;
+                return 0.50; // whatsapp, sms
+              };
+              const estCost = c.total_sent * channelCostPerMessage(c.channel);
+              const revenue = c.total_attributed_revenue || 0;
+              const roiVal = estCost > 0 ? ((revenue - estCost) / estCost * 100) : 0;
+              const roiFormatted = estCost > 0 ? (roiVal >= 0 ? `+${roiVal.toFixed(0)}%` : `${roiVal.toFixed(0)}%`) : '0%';
+              const clickToConvRate = c.total_clicked ? ((c.total_conversions || 0) / c.total_clicked * 100).toFixed(1) + '%' : '0.0%';
+              const sentToConvRate = c.total_sent ? ((c.total_conversions || 0) / c.total_sent * 100).toFixed(1) + '%' : '0.0%';
+
+              return (
+                <div
+                  key={c.id}
+                  className={`campaign-card glass ${expandedCampaignId === c.id ? 'expanded' : ''}`}
+                  onClick={() => toggleCampaign(c.id)}
+                  style={{ cursor: 'pointer', transition: 'all 0.3s ease' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '12px' }}>
+                    <div className="campaign-info">
+                      <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{c.name}</span>
+                        <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', fontWeight: 'normal', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          {expandedCampaignId === c.id ? 'Hide Details' : 'View Details'}
+                        </span>
+                      </h4>
+                      <div className="campaign-meta">
+                        <span className={`badge badge-${c.status}`}>{c.status}</span>
+                        <span>{c.channel.toUpperCase()}</span>
+                        <span>{new Date(c.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                    <div className="campaign-stats" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+                      <div className="mini-stat">
+                        <div className="mini-value" style={{ color: '#3b82f6' }}>
+                          <Send size={14} style={{ marginRight: 2 }} />{c.total_sent}
+                        </div>
+                        <div className="mini-label">Sent</div>
+                      </div>
+                      <div className="mini-stat">
+                        <div className="mini-value" style={{ color: '#f97316' }}>
+                          <Eye size={14} style={{ marginRight: 2 }} />{c.total_opened}
+                        </div>
+                        <div className="mini-label">Opened</div>
+                      </div>
+                      <div className="mini-stat">
+                        <div className="mini-value" style={{ color: '#22c55e' }}>
+                          <MousePointerClick size={14} style={{ marginRight: 2 }} />{c.total_clicked}
+                        </div>
+                        <div className="mini-label">Clicked</div>
+                      </div>
+                      <div className="mini-stat">
+                        <div className="mini-value" style={{ color: '#ec4899' }}>
+                          <ShoppingCart size={14} style={{ marginRight: 2 }} />{c.total_conversions || 0}
+                        </div>
+                        <div className="mini-label">Conversions</div>
+                      </div>
+                      <div className="mini-stat" style={{ minWidth: '75px' }}>
+                        <div className="mini-value" style={{ color: '#10b981' }}>
+                          ₹{Math.round(revenue).toLocaleString('en-IN')}
+                        </div>
+                        <div className="mini-label">Revenue</div>
+                      </div>
+
+                      {/* Funnel Bar */}
+                      <div style={{ width: 120 }}>
+                        <div className="funnel-bar" title={`Delivered: ${c.total_delivered}`}>
+                          <div
+                            className="fill delivered"
+                            style={{ width: `${c.total_sent ? (c.total_delivered / c.total_sent * 100) : 0}%` }}
+                          />
+                        </div>
+                        <div className="funnel-bar" title={`Opened: ${c.total_opened}`}>
+                          <div
+                            className="fill opened"
+                            style={{ width: `${c.total_delivered ? (c.total_opened / c.total_delivered * 100) : 0}%` }}
+                          />
+                        </div>
+                        <div className="funnel-bar" title={`Clicked: ${c.total_clicked}`}>
+                          <div
+                            className="fill clicked"
+                            style={{ width: `${c.total_delivered ? (c.total_clicked / c.total_delivered * 100) : 0}%` }}
+                          />
+                        </div>
+                        <div className="funnel-bar" title={`Converted: ${c.total_conversions || 0}`}>
+                          <div
+                            className="fill converted"
+                            style={{ width: `${c.total_clicked ? ((c.total_conversions || 0) / c.total_clicked * 100) : 0}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="campaign-stats">
-                    <div className="mini-stat">
-                      <div className="mini-value" style={{ color: '#3b82f6' }}>
-                        <Send size={14} style={{ marginRight: 2 }} />{c.total_sent}
-                      </div>
-                      <div className="mini-label">Sent</div>
-                    </div>
-                    <div className="mini-stat">
-                      <div className="mini-value" style={{ color: '#f97316' }}>
-                        <Eye size={14} style={{ marginRight: 2 }} />{c.total_opened}
-                      </div>
-                      <div className="mini-label">Opened</div>
-                    </div>
-                    <div className="mini-stat">
-                      <div className="mini-value" style={{ color: '#22c55e' }}>
-                        <MousePointerClick size={14} style={{ marginRight: 2 }} />{c.total_clicked}
-                      </div>
-                      <div className="mini-label">Clicked</div>
-                    </div>
 
-                    {/* Funnel Bar */}
-                    <div style={{ width: 120 }}>
-                      <div className="funnel-bar">
-                        <div
-                          className="fill delivered"
-                          style={{ width: `${c.total_sent ? (c.total_delivered / c.total_sent * 100) : 0}%` }}
-                        />
-                      </div>
-                      <div className="funnel-bar">
-                        <div
-                          className="fill opened"
-                          style={{ width: `${c.total_delivered ? (c.total_opened / c.total_delivered * 100) : 0}%` }}
-                        />
-                      </div>
-                      <div className="funnel-bar">
-                        <div
-                          className="fill clicked"
-                          style={{ width: `${c.total_delivered ? (c.total_clicked / c.total_delivered * 100) : 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expanded Details Section */}
-                {expandedCampaignId === c.id && (
-                  <div
-                    className="campaign-details-expanded"
-                    style={{
-                      marginTop: '20px',
-                      paddingTop: '20px',
-                      borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-                      width: '100%',
-                      textAlign: 'left',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '16px'
-                    }}
-                    onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details content
-                  >
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                      {/* Audience info card */}
-                      <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
-                          Target Audience Segment
-                        </div>
-                        <div style={{ fontSize: '13.5px', color: 'var(--text-primary)', fontWeight: '600', lineHeight: '1.5' }}>
-                          {c.segment_description || 'No description available'}
-                        </div>
-                      </div>
-
-                      {/* Parameters card */}
-                      <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
-                          Campaign Parameters
-                        </div>
-                        <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Audience Size:</span>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.total_audience.toLocaleString()} customers</span>
+                  {/* Expanded Details Section */}
+                  {expandedCampaignId === c.id && (
+                    <div
+                      className="campaign-details-expanded"
+                      style={{
+                        marginTop: '20px',
+                        paddingTop: '20px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                        width: '100%',
+                        textAlign: 'left',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '16px'
+                      }}
+                      onClick={(e) => e.stopPropagation()} // Prevent collapse when clicking details content
+                    >
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
+                        {/* Audience info card */}
+                        <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                            Target Audience Segment
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Channel:</span>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{(c.channel || 'WhatsApp').toUpperCase()}</span>
+                          <div style={{ fontSize: '13.5px', color: 'var(--text-primary)', fontWeight: '600', lineHeight: '1.5' }}>
+                            {c.segment_description || 'No description available'}
                           </div>
-                          {c.filter_criteria?.filters && c.filter_criteria.filters.length > 0 && (
-                            <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Filters Applied:</span>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                {c.filter_criteria.filters.map((f: any, idx: number) => (
-                                  <span key={idx} className="glass-subtle" style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
-                                    {f.field} {f.op} {String(f.value)}
-                                  </span>
-                                ))}
-                              </div>
+                        </div>
+
+                        {/* Parameters card */}
+                        <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                            Campaign Parameters
+                          </div>
+                          <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>Audience Size:</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.total_audience.toLocaleString()} customers</span>
                             </div>
-                          )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>Channel:</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{(c.channel || 'WhatsApp').toUpperCase()}</span>
+                            </div>
+                            {c.filter_criteria?.filters && c.filter_criteria.filters.length > 0 && (
+                              <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '11px', display: 'block', marginBottom: '4px' }}>Filters Applied:</span>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                  {c.filter_criteria.filters.map((f: any, idx: number) => (
+                                    <span key={idx} className="glass-subtle" style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
+                                      {f.field} {f.op} {String(f.value)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Attribution & ROI card */}
+                        <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '700', letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                            Attribution & ROI Metrics
+                          </div>
+                          <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>Conversion Rate:</span>
+                              <span style={{ fontWeight: 600, color: '#ec4899' }}>{sentToConvRate} (Click-to-Conv: {clickToConvRate})</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>Estimated Cost:</span>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>₹{estCost.toFixed(2)}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>Campaign ROI:</span>
+                              <span style={{ fontWeight: 700, color: roiVal >= 0 ? '#10b981' : '#ef4444' }}>{roiFormatted}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
                     {/* Message content card */}
                     <div className="glass-subtle" style={{ padding: '16px', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.12)', background: 'rgba(255, 255, 255, 0.35)' }}>
@@ -267,7 +320,7 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>

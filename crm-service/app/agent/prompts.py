@@ -183,8 +183,13 @@ Rules:
 7. Return ONLY the message text. No explanation, no labels.
 8. For email, format as: SUBJECT: [subject]\n\n[body]
 9. CRITICAL: Do NOT include any emojis (like 🚀, 👥, etc.) anywhere in the message template. Use text and professional copy only.
+10. BRAND INTEGRATION: You must incorporate the products, outlets/cities, campaign/promotional links, support numbers, and brand tone defined in the brand profile context to create hyper-personalized messages. Never make up URLs or products if they are provided in the brand profile!
 
-Context will include: channel, audience description, offer/message description.
+Context:
+{context}
+
+BRAND PROFILE CONTEXT:
+{brand_profile}
 """
 
 
@@ -254,6 +259,9 @@ Example: "We have 320 customers in Mumbai, of which 56 are VIPs. Should we targe
 CURRENT CAMPAIGN BRIEF:
 {brief}
 
+BRAND PROFILE CONTEXT:
+{brand_profile}
+
 DATABASE QUERY RESULTS (if any):
 SQL Run: {sql_query}
 Results: {query_results}
@@ -269,7 +277,8 @@ RULES:
 8. Provide 3-4 concrete clickable choices in the "suggestions" block. Suggestion category must match: "audience", "channel", "offer", "message", or "action".
 9. Keep responses concise (2-4 sentences max).
 10. Suggestions Focus: Focus suggestions ONLY on the parameter currently under discussion or being asked about in the follow-up question. Do NOT mix categories (e.g., if you are asking the marketer to refine the audience, do NOT suggest options for "channel" or "offer"). Never provide suggestions for fields that are already defined in the brief.
-11. Completion and Transition: If the campaign brief now has all three essential parameters ("goal", "audience", and "channel") defined, set "ready_to_plan" to true. In the conversational response, instead of asking another follow-up question, briefly summarize the chosen campaign parameters and invite the marketer to proceed to the planning stage. In this case, you MUST output exactly one suggestion chip: {"label": "Generate Campaign Plan", "value": "plan_campaign", "category": "action"}.
+11. BRAND INTEGRATION: Use the brand profile, specific products, categories, outlets, and brand tone to make contextually relevant suggestions (e.g., recommending a campaign for "Espresso Roast" if the brand is a coffee roaster, or showcasing special pricing/locations from the catalog).
+12. Completion and Transition: If the campaign brief now has all three essential parameters ("goal", "audience", and "channel") defined, set "ready_to_plan" to true. In the conversational response, instead of asking another follow-up question, briefly summarize the chosen campaign parameters and invite the marketer to proceed to the planning stage. In this case, you MUST output exactly one suggestion chip: {"label": "Generate Campaign Plan", "value": "plan_campaign", "category": "action"}.
 
 RESPONSE FORMAT — Return ONLY a JSON object:
 {

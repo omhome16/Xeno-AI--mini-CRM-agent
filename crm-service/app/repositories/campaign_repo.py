@@ -128,12 +128,25 @@ async def update_campaign_status(
 
 
 async def increment_campaign_counter(
-    pool: asyncpg.Pool, campaign_id: UUID, event_type: str
+    pool: asyncpg.Pool, campaign_id: UUID, event_type: str, amount: Optional[float] = None
 ) -> None:
     """
     Increment a denormalized counter on the campaigns table.
     Called when a delivery event is processed.
     """
+    if event_type == "converted":
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE campaigns
+                SET total_conversions = total_conversions + 1,
+                    total_attributed_revenue = total_attributed_revenue + COALESCE($2, 0.00)
+                WHERE id = $1
+                """,
+                campaign_id, amount
+            )
+        return
+
     counter_map = {
         "sent": "total_sent",
         "delivered": "total_delivered",
@@ -220,7 +233,7 @@ async def update_communication_status(
     Update communication status with forward-only enforcement.
     Returns True if the status was updated, False if rejected (out-of-order).
     """
-    STATUS_ORDER = {"pending": 0, "sent": 1, "delivered": 2, "opened": 3, "clicked": 4}
+    STATUS_ORDER = {"pending": 0, "sent": 1, "delivered": 2, "opened": 3, "clicked": 4, "converted": 5}
 
     async with pool.acquire() as conn:
         current = await conn.fetchval(
@@ -248,6 +261,18 @@ async def update_communication_status(
                 f"current={current}, received={status}"
             )
             return False
+
+        if status == "converted":
+            revenue = kwargs.get("attributed_revenue")
+            await conn.execute(
+                """
+                UPDATE communications
+                SET status = 'converted', converted_at = NOW(), attributed_revenue = $1
+                WHERE id = $2
+                """,
+                revenue, comm_id
+            )
+            return True
 
         timestamp_field = f"{status}_at"
         await conn.execute(

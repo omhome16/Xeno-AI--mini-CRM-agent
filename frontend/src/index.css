@@ -822,6 +822,7 @@ body::before {
 .funnel-bar .fill.delivered { background: var(--info); }
 .funnel-bar .fill.opened { background: var(--orange-400); }
 .funnel-bar .fill.clicked { background: var(--success); }
+.funnel-bar .fill.converted { background: #ec4899; }
 
 /* ═══════════════════════════════════════════════
    ANIMATIONS

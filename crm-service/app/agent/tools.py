@@ -221,8 +221,42 @@ async def generate_message(
         f"Offer details: {offer_details or 'None specified'}"
     )
 
+    # Load and format brand profile dynamic context
+    from app.repositories import brand_repo
+    pool = get_main_pool()
+    profile = await brand_repo.get_brand_profile(pool)
+    brand_profile_ctx = "No brand profile configured. General retail brand context applies."
+    if profile:
+        context_lines = [
+            f"Brand Name: {profile.get('brand_name')}",
+            f"Niche/Category: {profile.get('niche')}",
+            f"Tone of voice: {profile.get('brand_tone', 'Professional')}"
+        ]
+        catalog = profile.get("product_catalog", [])
+        if catalog:
+            context_lines.append("Product Catalog:")
+            for p in catalog:
+                context_lines.append(f"  - {p.get('name')} (Price: \u20b9{p.get('price')}, Category: {p.get('category', 'None')}) - {p.get('description', '')}")
+        outlets = profile.get("outlets", [])
+        if outlets:
+            context_lines.append("Store Locations:")
+            for o in outlets:
+                context_lines.append(f"  - {o.get('name')} in {o.get('city')} ({o.get('address', '')})")
+        urls = profile.get("campaign_urls", [])
+        if urls:
+            context_lines.append("Promotional URLs / CTAs to include in copy:")
+            for u in urls:
+                context_lines.append(f"  - {u}")
+        if profile.get("support_phone"):
+            context_lines.append(f"Customer Support Phone: {profile.get('support_phone')}")
+        if profile.get("custom_context"):
+            context_lines.append(f"Additional Context/Guidelines: {profile.get('custom_context')}")
+        brand_profile_ctx = "\n".join(context_lines)
+
+    sys_prompt = MESSAGE_GENERATION_PROMPT.replace("{context}", context).replace("{brand_profile}", brand_profile_ctx)
+
     message = await llm_client.generate(
-        system_prompt=MESSAGE_GENERATION_PROMPT,
+        system_prompt=sys_prompt,
         user_input=context,
     )
 

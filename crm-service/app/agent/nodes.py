@@ -220,7 +220,9 @@ async def respond_brainstorm(state: CampaignState, llm_client: DualLLMClient) ->
         "message": "Formulating campaign recommendations...",
     })
     
+    brand_profile_ctx = await _get_brand_profile_context()
     response_prompt = BRAINSTORM_RESPONSE_PROMPT.replace("{brief}", brief_text)
+    response_prompt = response_prompt.replace("{brand_profile}", brand_profile_ctx)
     response_prompt = response_prompt.replace("{sql_query}", sql_query or "None")
     response_prompt = response_prompt.replace("{query_results}", query_results or "No query run")
 
@@ -433,13 +435,12 @@ async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> d
             "current_step": "campaign_error",
         }
 
-    # Start dispatch in the background
-    from app.workers.campaign_worker import dispatch_campaign
-    import asyncio
-    asyncio.create_task(
-        dispatch_campaign(result["campaign_id"], conversation_id=conv_id),
-        name=f"dispatch-{result['campaign_id'][:8]}",
-    )
+    # Push dispatch job to Redis queue
+    from app.services.redis_queue import push_to_queue
+    push_to_queue("crm_dispatch_queue", {
+        "campaign_id": result["campaign_id"],
+        "conversation_id": conv_id
+    })
 
     return {
         "campaign_id": result["campaign_id"],
@@ -448,3 +449,50 @@ async def execute_campaign(state: CampaignState, llm_client: DualLLMClient) -> d
         "communications_created": result["communications_created"],
         "current_step": "campaign_executing",
     }
+
+
+async def _get_brand_profile_context() -> str:
+    """Helper to fetch brand profile and format it for LLM context."""
+    try:
+        from app.database import get_main_pool
+        from app.repositories import brand_repo
+        pool = get_main_pool()
+        profile = await brand_repo.get_brand_profile(pool)
+        if not profile:
+            return "No brand profile configured. General retail brand context applies."
+        
+        # Format profile as text
+        context_lines = [
+            f"Brand Name: {profile.get('brand_name')}",
+            f"Niche/Category: {profile.get('niche')}",
+            f"Tone of voice: {profile.get('brand_tone', 'Professional')}"
+        ]
+        
+        catalog = profile.get("product_catalog", [])
+        if catalog:
+            context_lines.append("Product Catalog:")
+            for p in catalog:
+                context_lines.append(f"  - {p.get('name')} (Price: \u20b9{p.get('price')}, Category: {p.get('category', 'None')}) - {p.get('description', '')}")
+                
+        outlets = profile.get("outlets", [])
+        if outlets:
+            context_lines.append("Store Locations:")
+            for o in outlets:
+                context_lines.append(f"  - {o.get('name')} in {o.get('city')} ({o.get('address', '')})")
+                
+        urls = profile.get("campaign_urls", [])
+        if urls:
+            context_lines.append("Promotional URLs / CTAs to include in copy:")
+            for u in urls:
+                context_lines.append(f"  - {u}")
+                
+        if profile.get("support_phone"):
+            context_lines.append(f"Customer Support Phone: {profile.get('support_phone')}")
+            
+        if profile.get("custom_context"):
+            context_lines.append(f"Additional Context/Guidelines: {profile.get('custom_context')}")
+            
+        return "\n".join(context_lines)
+    except Exception as e:
+        logger.warning(f"Error fetching brand profile: {e}")
+        return "No brand profile configured. General retail brand context applies."

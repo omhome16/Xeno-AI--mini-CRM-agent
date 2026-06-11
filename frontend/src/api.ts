@@ -52,6 +52,8 @@ export interface Campaign {
   total_failed: number;
   total_opened: number;
   total_clicked: number;
+  total_conversions?: number;
+  total_attributed_revenue?: number;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -222,5 +224,75 @@ export async function fetchCampaigns(): Promise<{ campaigns: Campaign[]; total: 
 
 export async function fetchCampaignDetail(id: string): Promise<CampaignDetail> {
   const res = await fetch(`${API_BASE}/api/campaigns/${id}`);
+  return res.json();
+}
+
+// ── Brand Profile API ──
+
+export interface ProductItem {
+  name: string;
+  price: number;
+  category?: string;
+  description?: string;
+}
+
+export interface OutletItem {
+  name: string;
+  city: string;
+  address?: string;
+}
+
+export interface BrandProfile {
+  brand_name: string;
+  niche: string;
+  product_catalog: ProductItem[];
+  outlets: OutletItem[];
+  campaign_urls: string[];
+  support_phone?: string;
+  brand_tone?: string;
+  custom_context?: string;
+}
+
+export async function fetchBrandProfile(): Promise<BrandProfile> {
+  const res = await fetch(`${API_BASE}/brand`);
+  if (!res.ok) throw new Error('Failed to fetch brand profile');
+  return res.json();
+}
+
+export async function saveBrandProfile(profile: BrandProfile): Promise<{ status: string; data: BrandProfile }> {
+  const res = await fetch(`${API_BASE}/brand`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) throw new Error('Failed to save brand profile');
+  return res.json();
+}
+
+// ── Ingestion API ──
+
+export async function ingestCustomers(csvText: string): Promise<{ status: string; count: number; message: string; errors?: string[] }> {
+  const res = await fetch(`${API_BASE}/api/ingest/customers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csv_text: csvText }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ detail: 'Failed to ingest customers' }));
+    throw new Error(errData.detail || 'Failed to ingest customers');
+  }
+  return res.json();
+}
+
+export async function ingestOrders(csvText: string): Promise<{ status: string; count: number; message: string; errors?: string[] }> {
+  const res = await fetch(`${API_BASE}/api/ingest/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ csv_text: csvText }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ detail: 'Failed to ingest orders' }));
+    throw new Error(errData.detail || 'Failed to ingest orders');
+  }
   return res.json();
 }

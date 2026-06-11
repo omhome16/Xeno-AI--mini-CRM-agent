@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # ── CRM Callback URL ──
     CRM_RECEIPT_URL: str = "http://localhost:8000/api/receipts"
+    REDIS_URL: str = "redis://localhost:6379"
 
     # ── App Settings ──
     APP_NAME: str = "Xeno Channel Service"
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
+        "extra": "ignore",
     }
 
 

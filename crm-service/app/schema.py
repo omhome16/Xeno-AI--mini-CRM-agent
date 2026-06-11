@@ -64,6 +64,8 @@ SCHEMA_STATEMENTS: list[str] = [
         total_amount    DECIMAL(12,2) NOT NULL,
         items_count     INT DEFAULT 1,
         status          VARCHAR(50) DEFAULT 'completed',
+        category        VARCHAR(100),
+        product_name    VARCHAR(255),
         created_at      TIMESTAMPTZ DEFAULT NOW()
     )
     """,
@@ -104,6 +106,8 @@ SCHEMA_STATEMENTS: list[str] = [
         total_failed      INT DEFAULT 0,
         total_opened      INT DEFAULT 0,
         total_clicked     INT DEFAULT 0,
+        total_conversions INT DEFAULT 0,
+        total_attributed_revenue DECIMAL(12,2) DEFAULT 0.00,
 
         created_at        TIMESTAMPTZ DEFAULT NOW(),
         started_at        TIMESTAMPTZ,
@@ -132,6 +136,8 @@ SCHEMA_STATEMENTS: list[str] = [
         failure_reason  TEXT,
         opened_at       TIMESTAMPTZ,
         clicked_at      TIMESTAMPTZ,
+        converted_at    TIMESTAMPTZ,
+        attributed_revenue DECIMAL(10,2),
 
         created_at      TIMESTAMPTZ DEFAULT NOW()
     )
@@ -155,6 +161,27 @@ SCHEMA_STATEMENTS: list[str] = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_events_comm ON delivery_events(communication_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_type ON delivery_events(event_type)",
+
+    # ════════════════════════════════════════════
+    # BRAND PROFILE
+    # ════════════════════════════════════════════
+    """
+    CREATE TABLE IF NOT EXISTS brand_profile (
+        id         SERIAL PRIMARY KEY,
+        data       JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+
+    # ════════════════════════════════════════════
+    # MIGRATIONS / ALTERATIONS FOR EXISTING TABLES
+    # ════════════════════════════════════════════
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS total_conversions INT DEFAULT 0",
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS total_attributed_revenue DECIMAL(12,2) DEFAULT 0.00",
+    "ALTER TABLE communications ADD COLUMN IF NOT EXISTS converted_at TIMESTAMPTZ",
+    "ALTER TABLE communications ADD COLUMN IF NOT EXISTS attributed_revenue DECIMAL(10,2)",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS category VARCHAR(100)",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_name VARCHAR(255)",
 
     # ════════════════════════════════════════════
     # READ-ONLY ROLE FOR AI QUERIES

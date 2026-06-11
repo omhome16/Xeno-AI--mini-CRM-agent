@@ -77,7 +77,7 @@ class DeliveryReceiptRequest(BaseModel):
     """
     communication_id: str
     event_type: str = Field(
-        ..., pattern="^(sent|delivered|failed|opened|clicked)$"
+        ..., pattern="^(sent|delivered|failed|opened|clicked|converted)$"
     )
     timestamp: Optional[str] = None
     event_data: dict[str, Any] = Field(default_factory=dict)
