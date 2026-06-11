@@ -17,6 +17,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from langsmith import traceable
+
 from app.database import get_main_pool, get_readonly_pool
 from app.services.sql_guard import SQLGuard, SQLGuardError
 from app.agent.prompts import (
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 _sql_guard = SQLGuard()
 
 
+@traceable(run_type="tool")
 async def query_customers(llm_client, audience_description: str) -> dict:
     """
     Convert natural language to SQL, validate, and execute.
@@ -126,6 +129,7 @@ async def query_customers(llm_client, audience_description: str) -> dict:
     }
 
 
+@traceable(run_type="tool")
 async def create_segment(
     llm_client,
     audience_description: str,
@@ -189,6 +193,7 @@ async def create_segment(
     }
 
 
+@traceable(run_type="tool")
 async def generate_message(
     llm_client,
     channel: str,
@@ -230,6 +235,7 @@ async def generate_message(
     }
 
 
+@traceable(run_type="tool")
 async def execute_campaign(
     llm_client,
     segment_id: str,
