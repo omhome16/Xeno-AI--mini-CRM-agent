@@ -65,7 +65,7 @@ class DualLLMClient:
         if self._groq_client is None and self._groq_key:
             try:
                 from groq import Groq
-                self._groq_client = Groq(api_key=self._groq_key)
+                self._groq_client = Groq(api_key=self._groq_key, max_retries=0)
                 logger.info("Groq client initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize Groq: {e}")
@@ -206,11 +206,9 @@ class DualLLMClient:
         # Standard active Groq models in prioritized order
         models = [
             "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama3-70b-8192",
             "llama-3.1-8b-instant",
-            "llama3-8b-8192",
             "mixtral-8x7b-32768",
+            "gemma2-9b-it",
         ]
 
         def _sync_call(model_name: str, use_json_format: bool = True):

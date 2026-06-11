@@ -11,7 +11,7 @@ async def start_simulation_worker():
 
     while True:
         try:
-            task = pop_from_queue("channel_simulation_queue", timeout=2)
+            task = await asyncio.to_thread(pop_from_queue, "channel_simulation_queue", 2)
             if task:
                 comm_id = task.get("communication_id")
                 recipient = task.get("recipient")

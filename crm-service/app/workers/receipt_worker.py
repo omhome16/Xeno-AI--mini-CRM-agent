@@ -19,7 +19,7 @@ async def start_receipt_worker():
         try:
             # Block pop a receipt from the queue
             tasks = []
-            first_task = pop_from_queue("crm_receipt_queue", timeout=2)
+            first_task = await asyncio.to_thread(pop_from_queue, "crm_receipt_queue", 2)
             if first_task:
                 tasks.append(first_task)
                 
@@ -159,7 +159,7 @@ async def start_receipt_worker():
                                         """
                                         UPDATE customers
                                         SET total_spent = total_spent + $1,
-                                            orders_count = orders_count + 1,
+                                            total_orders = total_orders + 1,
                                             last_order_at = NOW()
                                         WHERE id = $2
                                         """,

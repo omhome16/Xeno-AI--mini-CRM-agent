@@ -13,7 +13,7 @@ async def start_dispatch_worker():
         try:
             # Block-pop a campaign dispatch task from the queue
             # Timeout is 1 second to allow graceful loops
-            task = pop_from_queue("crm_dispatch_queue", timeout=2)
+            task = await asyncio.to_thread(pop_from_queue, "crm_dispatch_queue", 2)
             if task:
                 campaign_id = task.get("campaign_id")
                 conversation_id = task.get("conversation_id")
