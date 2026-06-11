@@ -1,0 +1,6 @@
+name,city,tags,external_id,email,phone
+Aarav Sharma,Bangalore,"fashion,regular,whatsapp_opted",cust_small_1,aarav.sharma@gmail.com,+919876543201
+Diya Sen,Mumbai,"fashion,regular,email_opted",cust_small_2,diya.sen@yahoo.com,+919876543202
+Kabir Mehta,Delhi,"vip,high_value,sms_opted",cust_small_3,kabir.mehta@outlook.com,+919876543203
+Ishaan Goel,Bangalore,"new,whatsapp_opted",cust_small_4,ishaan.goel@gmail.com,+919876543204
+Ananya Rao,Delhi,"lapsed,budget,email_opted",cust_small_5,ananya.rao@gmail.com,+919876543205

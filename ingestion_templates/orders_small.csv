@@ -1,0 +1,6 @@
+customer_external_id,total_amount,order_date,items_count,category,product_name
+cust_small_1,1850.00,2026-06-01 10:00:00,1,Apparel,Organic Cotton Crewneck
+cust_small_2,4200.00,2026-06-02 11:30:00,1,Apparel,Sustainable Denim Jacket
+cust_small_3,3500.00,2026-06-03 14:15:00,1,Knitwear,Merino Wool Knit Sweater
+cust_small_4,2400.00,2026-06-04 16:45:00,1,Footwear,Minimalist Canvas Sneakers
+cust_small_5,2900.00,2026-06-05 18:20:00,1,Outerwear,Recycled Polyester Windbreaker
