@@ -77,7 +77,16 @@ async def get_campaign(pool: asyncpg.Pool, campaign_id: UUID) -> Optional[dict]:
             """,
             campaign_id
         )
-        return dict(row) if row else None
+        if not row:
+            return None
+        res = dict(row)
+        if res.get("filter_criteria") and isinstance(res["filter_criteria"], str):
+            import json
+            try:
+                res["filter_criteria"] = json.loads(res["filter_criteria"])
+            except Exception:
+                pass
+        return res
 
 
 async def get_campaigns(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
@@ -93,7 +102,17 @@ async def get_campaigns(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
             """,
             limit
         )
-    return [dict(r) for r in rows]
+    result = []
+    import json
+    for r in rows:
+        res = dict(r)
+        if res.get("filter_criteria") and isinstance(res["filter_criteria"], str):
+            try:
+                res["filter_criteria"] = json.loads(res["filter_criteria"])
+            except Exception:
+                pass
+        result.append(res)
+    return result
 
 
 async def update_campaign_status(
