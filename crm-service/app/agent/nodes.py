@@ -361,6 +361,20 @@ async def draft_message(state: CampaignState, llm_client: DualLLMClient) -> dict
     from app.sse.manager import push_event
     conv_id = state.get("conversation_id", "")
 
+    # If message template is already custom drafted/edited by user, preserve it
+    custom_template = state.get("message_template")
+    if custom_template:
+        logger.info("Preserving custom message template provided in state.")
+        await push_event(conv_id, "step_start", {
+            "step": "Custom Message",
+            "message": "Using custom edited message template...",
+        })
+        return {
+            "message_template": custom_template,
+            "message_char_count": len(custom_template),
+            "current_step": "message_drafted",
+        }
+
     channel = state.get("channel", "whatsapp") or "whatsapp"
     logger.info(f"Drafting {channel} message...")
 

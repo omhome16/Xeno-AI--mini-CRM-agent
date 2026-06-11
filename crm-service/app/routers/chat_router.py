@@ -29,6 +29,7 @@ from app.agent.llm import DualLLMClient
 from app.agent.graph import build_campaign_graph
 from app.agent.state import CampaignState
 from app.sse.manager import push_event, event_stream
+from app.agent.prompts import IMPROVE_MESSAGE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class ExecuteRequest(BaseModel):
     channel: str = Field(default="whatsapp")
     message_description: str = Field(default="")
     offer_details: str = Field(default="")
+    message_template: Optional[str] = None
     conversation_id: Optional[str] = None
 
 
@@ -80,6 +82,20 @@ class ChatResponse(BaseModel):
     conversation_id: str
     status: str = "processing"
     message: str = "Agent is working on your request. Connect to the SSE stream for updates."
+
+
+class ImproveMessageRequest(BaseModel):
+    """Request to improve a message template based on instructions."""
+    message_template: str = Field(..., description="The original drafted message template")
+    instruction: str = Field(..., description="Natural language instructions/feedback for improvement")
+    channel: str = Field(..., description="Campaign channel (whatsapp, sms, email, rcs)")
+    audience_description: Optional[str] = Field(default="", description="Audience description")
+    offer_details: Optional[str] = Field(default="", description="Offer/discount details")
+
+
+class ImproveMessageResponse(BaseModel):
+    """Response containing the improved message."""
+    improved_message: str
 
 
 # ── Background task: Run the graph ──
@@ -320,6 +336,7 @@ async def execute_campaign(request: ExecuteRequest):
         "message_description": request.message_description or request.brief.get("message_idea", ""),
         "channel": request.channel,
         "offer_details": request.offer_details or request.brief.get("offer", ""),
+        "message_template": request.message_template,
         "brief": request.brief,
         "current_step": "executing",
     }
@@ -342,6 +359,49 @@ async def execute_campaign(request: ExecuteRequest):
         status="executing",
         message="Launching campaign...",
     )
+
+
+@router.post(
+    "/improve-message",
+    response_model=ImproveMessageResponse,
+    summary="Improve a campaign message template with AI based on instructions",
+)
+async def improve_message(request: ImproveMessageRequest):
+    """
+    Improve a message template using the LLM according to the user's natural language instructions.
+    """
+    settings = get_settings()
+    llm_client = DualLLMClient(
+        gemini_key=settings.GEMINI_API_KEY,
+        groq_key=settings.GROQ_API_KEY,
+    )
+
+    if not llm_client.is_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="No LLM providers configured. Set GEMINI_API_KEY or GROQ_API_KEY.",
+        )
+
+    # Prepare prompt safely replacing variables without .format() KeyError risks
+    prompt = IMPROVE_MESSAGE_PROMPT.replace("{message_template}", request.message_template).replace("{instruction}", request.instruction)
+
+    context = (
+        f"Channel: {request.channel}\n"
+        f"Audience description: {request.audience_description or 'None'}\n"
+        f"Offer details: {request.offer_details or 'None'}"
+    )
+
+    try:
+        improved = await llm_client.generate(
+            system_prompt=prompt,
+            user_input=context,
+        )
+        if not improved:
+            raise HTTPException(status_code=500, detail="AI returned an empty response.")
+        return ImproveMessageResponse(improved_message=improved.strip())
+    except Exception as e:
+        logger.error(f"Message improvement error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to improve message: {str(e)}")
 
 
 @router.post(

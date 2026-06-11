@@ -95,12 +95,35 @@ export async function planCampaign(
   return res.json();
 }
 
+export async function improveMessage(
+  messageTemplate: string,
+  instruction: string,
+  channel: string,
+  audienceDescription?: string,
+  offerDetails?: string,
+): Promise<{ improved_message: string }> {
+  const res = await fetch(`${API_BASE}/api/chat/improve-message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message_template: messageTemplate,
+      instruction,
+      channel,
+      audience_description: audienceDescription || '',
+      offer_details: offerDetails || '',
+    }),
+  });
+  if (!res.ok) throw new Error(`Improve message failed: ${res.status}`);
+  return res.json();
+}
+
 export async function executeCampaign(
   brief: CampaignBrief,
   audienceDescription: string,
   channel: string,
   messageDescription: string = '',
   offerDetails: string = '',
+  messageTemplate?: string,
 ): Promise<{ conversation_id: string }> {
   const res = await fetch(`${API_BASE}/api/chat/execute`, {
     method: 'POST',
@@ -111,6 +134,7 @@ export async function executeCampaign(
       channel,
       message_description: messageDescription,
       offer_details: offerDetails,
+      message_template: messageTemplate,
     }),
   });
   if (!res.ok) throw new Error(`Execute failed: ${res.status}`);

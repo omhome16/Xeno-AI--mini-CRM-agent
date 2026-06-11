@@ -294,3 +294,24 @@ Keep responses brief (2-3 sentences). Be warm and helpful.
 Do NOT use emojis anywhere in your response.
 Return ONLY a JSON object: {"response": "your answer here"}
 """
+
+IMPROVE_MESSAGE_PROMPT = """You are a marketing copywriter. Improve the given message template based on the marketer's instruction.
+
+Channel constraints:
+  - WhatsApp: Conversational tone, max 1024 chars, NO emojis
+  - SMS: Very concise, max 160 chars, NO emojis, include CTA
+  - Email: Professional but warm, can be longer, include subject line, NO emojis
+  - RCS: Rich, interactive feel, 500 chars, NO emojis
+
+Rules:
+1. Preserve placeholders like {{{name}}} and {{{city}}} if they are in the original template. Do NOT remove or modify them.
+2. Do NOT use any emojis under any circumstances. Emojis are strictly banned.
+3. Return ONLY the improved message content. No explanations, no markdown wrappers, no notes.
+4. For email, format as: SUBJECT: [subject]\\n\\n[body]
+
+Original Message:
+{message_template}
+
+Marketer Instruction:
+{instruction}
+"""

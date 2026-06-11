@@ -316,6 +316,7 @@ export default function ChatPage() {
         brief.channel || 'whatsapp',
         brief.message_idea || '',
         brief.offer || '',
+        planData?.messageTemplate,
       );
 
       connectSSE(conversation_id, (event) => {
@@ -516,8 +517,13 @@ export default function ChatPage() {
           <div className="plan-review-area">
             <CampaignPlanCard
               {...planData}
+              audienceDescription={brief.audience}
+              offerDetails={brief.offer}
               onLaunch={handleLaunchCampaign}
               onBack={handleBackToBrainstorm}
+              onUpdateMessage={(newMessage) => {
+                setPlanData(prev => prev ? { ...prev, messageTemplate: newMessage } : null);
+              }}
               loading={loading}
             />
           </div>
