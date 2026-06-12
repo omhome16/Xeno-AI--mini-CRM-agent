@@ -119,12 +119,15 @@ export default function App() {
             <h2>{header.title}</h2>
             <span className="header-subtitle">{header.subtitle}</span>
           </div>
+          {activePage === 'chat' && (
+            <div id="header-copilot-portal" style={{ position: 'relative', flexGrow: 1, display: 'flex', justifyContent: 'flex-end', maxWidth: '420px', marginLeft: '1.5rem' }}></div>
+          )}
         </header>
 
         <div className="page-body">
           {/* Use display:none to keep all mounted but hidden, preserving state */}
           <div style={{ display: activePage === 'chat' ? 'contents' : 'none' }}>
-            <ChatPage />
+            <ChatPage isActive={activePage === 'chat'} />
           </div>
           <div style={{ display: activePage === 'dashboard' ? 'contents' : 'none' }}>
             <DashboardPage />

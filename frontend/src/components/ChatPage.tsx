@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Send, Bot, Brain, ChevronRight, ChevronLeft, Sparkles, X, Check, Play } from 'lucide-react';
 import {
   planCampaign,
@@ -41,7 +42,7 @@ const formatTagName = (tag: string) => {
     .join(' ');
 };
 
-export default function ChatPage() {
+export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   // ── Step State ──
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -598,8 +599,195 @@ export default function ChatPage() {
     setExecError(undefined);
   };
 
+  const portalNode = isActive ? document.getElementById('header-copilot-portal') : null;
+  const copilotPortalContent = portalNode ? createPortal(
+    <div
+      className="header-copilot-container"
+      style={{
+        width: '100%',
+        maxWidth: '420px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        position: 'relative',
+        pointerEvents: 'auto'
+      }}
+    >
+      {/* Floating Chat Input Bar */}
+      <div
+        className="header-copilot-bar"
+        onClick={() => !copilotOpen && setCopilotOpen(true)}
+        style={{
+          background: 'rgba(255, 255, 255, 0.35)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid var(--glass-border)',
+          borderRadius: '99px',
+          padding: '4px 6px 4px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          boxShadow: 'var(--glass-shadow-sm)',
+          cursor: copilotOpen ? 'default' : 'pointer',
+          width: '100%',
+          transition: 'all 0.3s ease'
+        }}
+      >
+        <Bot size={18} style={{ color: 'var(--orange-500)', flexShrink: 0 }} />
+        <input
+          type="text"
+          value={copilotInput}
+          onChange={e => setCopilotInput(e.target.value)}
+          onFocus={() => setCopilotOpen(true)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleSendCopilot();
+          }}
+          placeholder="Ask Copilot / brainstorm..."
+          disabled={loadingCopilot}
+          style={{
+            flexGrow: 1,
+            background: 'none',
+            border: 'none',
+            color: 'var(--text-primary)',
+            padding: '6px 0',
+            fontSize: '0.88rem',
+            outline: 'none',
+            minWidth: '0'
+          }}
+        />
+        <button
+          className="copilot-send-btn"
+          disabled={!copilotInput.trim() || loadingCopilot}
+          onClick={handleSendCopilot}
+          style={{
+            background: 'var(--orange-500)',
+            color: '#fff',
+            border: 'none',
+            width: '30px',
+            height: '30px',
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            flexShrink: 0
+          }}
+        >
+          <Send size={13} />
+        </button>
+      </div>
+
+      {/* Floating Popover History Window */}
+      {copilotOpen && (
+        <div
+          className="header-copilot-popover"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            right: '0',
+            width: '420px',
+            height: '380px',
+            borderRadius: '16px',
+            background: 'rgba(255, 255, 255, 0.85)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            border: '1px solid var(--glass-border)',
+            boxShadow: '0 12px 40px rgba(26, 16, 8, 0.15)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            animation: 'slideUp 0.3s ease',
+            zIndex: 1100
+          }}
+        >
+          {/* Popover Header */}
+          <div
+            className="copilot-header"
+            style={{
+              padding: '0.75rem 1rem',
+              background: 'rgba(249, 115, 22, 0.08)',
+              borderBottom: '1px solid var(--glass-border-subtle)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}
+          >
+            <span className="copilot-header-title" style={{ fontSize: '0.88rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+              <Bot size={16} style={{ color: 'var(--orange-500)' }} /> Campaign Copilot
+            </span>
+            <button
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+              onClick={() => setCopilotOpen(false)}
+            >
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* Popover Messages */}
+          <div
+            className="copilot-messages"
+            style={{
+              flexGrow: 1,
+              padding: '0.75rem',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.6rem'
+            }}
+          >
+            {copilotMessages.map(msg => (
+              <div
+                key={msg.id}
+                className={`copilot-msg copilot-msg-${msg.role}`}
+                style={{
+                  maxWidth: '85%',
+                  padding: '0.6rem 0.8rem',
+                  borderRadius: '12px',
+                  fontSize: '0.82rem',
+                  lineHeight: '1.4',
+                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  background: msg.role === 'user' ? 'var(--orange-500)' : 'rgba(255, 255, 255, 0.5)',
+                  color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
+                  border: msg.role === 'user' ? 'none' : '1px solid var(--glass-border-subtle)',
+                  borderBottomRightRadius: msg.role === 'user' ? '2px' : '12px',
+                  borderBottomLeftRadius: msg.role === 'user' ? '12px' : '2px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+                }}
+              >
+                {msg.content}
+              </div>
+            ))}
+            {loadingCopilot && (
+              <div
+                className="copilot-msg copilot-msg-assistant"
+                style={{
+                  alignSelf: 'flex-start',
+                  background: 'rgba(255, 255, 255, 0.4)',
+                  color: 'var(--text-muted)',
+                  padding: '0.6rem 0.8rem',
+                  borderRadius: '12px',
+                  borderBottomLeftRadius: '2px',
+                  border: '1px solid var(--glass-border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontSize: '0.82rem'
+                }}
+              >
+                <div className="thinking-dots"><span /><span /><span /></div> Thinking...
+              </div>
+            )}
+            <div ref={copilotEndRef} />
+          </div>
+        </div>
+      )}
+    </div>,
+    portalNode
+  ) : null;
+
   return (
-    <div className="campaign-studio" style={{ paddingBottom: '6rem' }}>
+    <div className="campaign-studio" style={{ paddingBottom: '2rem' }}>
       {/* Dynamic CSS Inject */}
       <style>{`
         .wizard-graph-flow {
@@ -1512,185 +1700,7 @@ export default function ChatPage() {
         </>
       )}
 
-      {/* Bottom Center Floating Copilot Chat Bar Container */}
-      <div
-        className="floating-copilot-container"
-        style={{
-          position: 'fixed',
-          bottom: '24px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: '90%',
-          maxWidth: '750px',
-          zIndex: 1000,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'stretch',
-          pointerEvents: 'none'
-        }}
-      >
-        {/* Floating Popover History Window */}
-        {copilotOpen && (
-          <div
-            className="floating-copilot-popover"
-            style={{
-              pointerEvents: 'auto',
-              marginBottom: '12px',
-              height: '380px',
-              borderRadius: '20px',
-              background: 'rgba(255, 255, 255, 0.85)',
-              backdropFilter: 'blur(20px)',
-              border: '1px solid var(--glass-border)',
-              boxShadow: '0 12px 40px rgba(26, 16, 8, 0.15)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              animation: 'slideUp 0.3s ease'
-            }}
-          >
-            {/* Popover Header */}
-            <div
-              className="copilot-header"
-              style={{
-                padding: '0.85rem 1.2rem',
-                background: 'rgba(249, 115, 22, 0.08)',
-                borderBottom: '1px solid var(--glass-border-subtle)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <span className="copilot-header-title" style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
-                <Bot size={18} style={{ color: 'var(--orange-500)' }} /> Campaign Copilot
-              </span>
-              <button
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                onClick={() => setCopilotOpen(false)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Popover Messages */}
-            <div
-              className="copilot-messages"
-              style={{
-                flexGrow: 1,
-                padding: '1rem',
-                overflowY: 'auto',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem'
-              }}
-            >
-              {copilotMessages.map(msg => (
-                <div
-                  key={msg.id}
-                  className={`copilot-msg copilot-msg-${msg.role}`}
-                  style={{
-                    maxWidth: '85%',
-                    padding: '0.7rem 0.9rem',
-                    borderRadius: '14px',
-                    fontSize: '0.9rem',
-                    lineHeight: '1.45',
-                    alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                    background: msg.role === 'user' ? 'var(--orange-500)' : 'rgba(255, 255, 255, 0.5)',
-                    color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
-                    border: msg.role === 'user' ? 'none' : '1px solid var(--glass-border-subtle)',
-                    borderBottomRightRadius: msg.role === 'user' ? '2px' : '14px',
-                    borderBottomLeftRadius: msg.role === 'user' ? '14px' : '2px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
-                  }}
-                >
-                  {msg.content}
-                </div>
-              ))}
-              {loadingCopilot && (
-                <div
-                  className="copilot-msg copilot-msg-assistant"
-                  style={{
-                    alignSelf: 'flex-start',
-                    background: 'rgba(255, 255, 255, 0.4)',
-                    color: 'var(--text-muted)',
-                    padding: '0.7rem 0.9rem',
-                    borderRadius: '14px',
-                    borderBottomLeftRadius: '2px',
-                    border: '1px solid var(--glass-border-subtle)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                  }}
-                >
-                  <div className="thinking-dots"><span /><span /><span /></div> Thinking...
-                </div>
-              )}
-              <div ref={copilotEndRef} />
-            </div>
-          </div>
-        )}
-
-        {/* Floating Chat Input Bar */}
-        <div
-          className="floating-copilot-bar"
-          onClick={() => !copilotOpen && setCopilotOpen(true)}
-          style={{
-            pointerEvents: 'auto',
-            background: 'rgba(255, 255, 255, 0.8)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid var(--glass-border)',
-            borderRadius: '99px',
-            padding: '6px 8px 6px 16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            boxShadow: '0 8px 30px rgba(26, 16, 8, 0.1)',
-            cursor: copilotOpen ? 'default' : 'pointer'
-          }}
-        >
-          <Bot size={22} style={{ color: 'var(--orange-500)', flexShrink: 0 }} />
-          <input
-            type="text"
-            value={copilotInput}
-            onChange={e => setCopilotInput(e.target.value)}
-            onFocus={() => setCopilotOpen(true)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') handleSendCopilot();
-            }}
-            placeholder="Ask Campaign Copilot to brainstorm, edit filters, or run campaign..."
-            disabled={loadingCopilot}
-            style={{
-              flexGrow: 1,
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-primary)',
-              padding: '8px 0',
-              fontSize: '0.95rem',
-              outline: 'none'
-            }}
-          />
-          <button
-            className="copilot-send-btn"
-            disabled={!copilotInput.trim() || loadingCopilot}
-            onClick={handleSendCopilot}
-            style={{
-              background: 'var(--orange-500)',
-              color: '#fff',
-              border: 'none',
-              width: '38px',
-              height: '38px',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              flexShrink: 0
-            }}
-          >
-            <Send size={16} />
-          </button>
-        </div>
-      </div>
+      {copilotPortalContent}
     </div>
   );
 }
