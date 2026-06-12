@@ -792,19 +792,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   ) : null;
 
   return (
-    <div className="campaign-studio" style={{ paddingBottom: '2rem', height: 'auto', overflow: 'visible' }}>
+    <div className="campaign-studio" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Dynamic CSS Inject */}
       <style>{`
         .wizard-graph-flow {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 2rem;
+          margin-bottom: 1rem;
           background: rgba(255, 255, 255, 0.45);
           backdrop-filter: blur(14px);
           border: 1px solid rgba(255, 255, 255, 0.28);
-          border-radius: 16px;
-          padding: 1.5rem 2rem;
+          border-radius: 12px;
+          padding: 0.6rem 1.5rem;
         }
         .wizard-node {
           display: flex;
@@ -816,8 +816,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           transition: all 0.3s ease;
         }
         .wizard-node-circle {
-          width: 40px;
-          height: 40px;
+          width: 30px;
+          height: 30px;
           border-radius: 50%;
           background: rgba(255, 255, 255, 0.3);
           border: 2px solid rgba(255, 255, 255, 0.28);
@@ -825,6 +825,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           align-items: center;
           justify-content: center;
           font-weight: 600;
+          font-size: 0.8rem;
           color: var(--text-secondary);
           transition: all 0.3s ease;
         }
@@ -841,8 +842,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           background: #10b981;
         }
         .wizard-node-label {
-          margin-top: 0.5rem;
-          font-size: 0.85rem;
+          margin-top: 0.35rem;
+          font-size: 0.78rem;
           font-weight: 500;
           color: var(--text-muted);
         }
@@ -859,7 +860,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           background: rgba(255, 255, 255, 0.28);
           margin: 0 1rem;
           position: relative;
-          top: -16px;
+          top: -11px;
           z-index: 1;
         }
         .wizard-line.completed {
@@ -869,7 +870,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           display: grid;
           grid-template-columns: 1.2fr 1fr;
           gap: 1.5rem;
-          min-height: 480px;
+          flex: 1;
+          min-height: 0;
         }
         .wizard-left-panel {
           background: rgba(255, 255, 255, 0.3);
@@ -881,6 +883,21 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           flex-direction: column;
           gap: 1.5rem;
           box-shadow: var(--glass-shadow);
+          max-height: 100%;
+          overflow-y: auto;
+        }
+        .wizard-left-panel::-webkit-scrollbar {
+          width: 6px;
+        }
+        .wizard-left-panel::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .wizard-left-panel::-webkit-scrollbar-thumb {
+          background: rgba(249, 115, 22, 0.2);
+          border-radius: 4px;
+        }
+        .wizard-left-panel::-webkit-scrollbar-thumb:hover {
+          background: rgba(249, 115, 22, 0.4);
         }
         .wizard-right-panel {
           background: rgba(255, 255, 255, 0.2);
@@ -892,7 +909,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           flex-direction: column;
           gap: 1.2rem;
           box-shadow: inset 0 0 20px rgba(249, 115, 22, 0.03);
-          max-height: 540px;
+          max-height: 100%;
           overflow-y: auto;
         }
         .wizard-right-panel::-webkit-scrollbar {
@@ -1152,9 +1169,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         .wizard-footer {
           display: flex;
           justify-content: space-between;
-          margin-top: 2rem;
+          margin-top: 1rem;
           border-top: 1px solid var(--glass-border-subtle);
-          padding-top: 1.5rem;
+          padding-top: 1rem;
+          flex-shrink: 0;
         }
         .wizard-btn {
           display: flex;
@@ -1189,6 +1207,22 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           display: flex;
           flex-direction: column;
           gap: 1.5rem;
+          max-height: 100%;
+          overflow-y: auto;
+          padding-right: 0.5rem;
+        }
+        .review-panel::-webkit-scrollbar {
+          width: 6px;
+        }
+        .review-panel::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .review-panel::-webkit-scrollbar-thumb {
+          background: rgba(249, 115, 22, 0.2);
+          border-radius: 4px;
+        }
+        .review-panel::-webkit-scrollbar-thumb:hover {
+          background: rgba(249, 115, 22, 0.4);
         }
         .review-card {
           background: rgba(255, 255, 255, 0.3);
@@ -1266,19 +1300,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       {/* Top Visual Graph Progress Flow */}
       <div className="wizard-graph-flow">
         <div className={`wizard-node ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`} onClick={() => !executing && setCurrentStep(1)}>
-          <div className="wizard-node-circle">{currentStep > 1 ? <Check size={16} /> : '1'}</div>
+          <div className="wizard-node-circle">{currentStep > 1 ? <Check size={13} /> : '1'}</div>
           <span className="wizard-node-label">Segment Builder</span>
         </div>
         <div className={`wizard-line ${currentStep > 1 ? 'completed' : ''}`} />
         
         <div className={`wizard-node ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 2 && setCurrentStep(2)}>
-          <div className="wizard-node-circle">{currentStep > 2 ? <Check size={16} /> : '2'}</div>
+          <div className="wizard-node-circle">{currentStep > 2 ? <Check size={13} /> : '2'}</div>
           <span className="wizard-node-label">Goal & Channel</span>
         </div>
         <div className={`wizard-line ${currentStep > 2 ? 'completed' : ''}`} />
 
         <div className={`wizard-node ${currentStep === 3 ? 'active' : ''} ${currentStep > 3 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 3 && setCurrentStep(3)}>
-          <div className="wizard-node-circle">{currentStep > 3 ? <Check size={16} /> : '3'}</div>
+          <div className="wizard-node-circle">{currentStep > 3 ? <Check size={13} /> : '3'}</div>
           <span className="wizard-node-label">Copywriter</span>
         </div>
         <div className={`wizard-line ${currentStep > 3 ? 'completed' : ''}`} />
