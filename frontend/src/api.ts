@@ -292,6 +292,8 @@ export interface AudienceRecommendation {
   filters: Record<string, any>;
   count: number;
   reason: string;
+  avg_spent: number;
+  avg_orders: number;
 }
 
 export interface StrategyRecommendation {
@@ -304,6 +306,33 @@ export interface MessageRecommendation {
   type: string;
   content: string;
   reason: string;
+}
+
+export interface MetadataCity {
+  city: string;
+  count: number;
+}
+
+export interface MetadataTag {
+  tag: string;
+  count: number;
+}
+
+export interface CampaignMetadata {
+  cities: MetadataCity[];
+  tags: MetadataTag[];
+  max_spent: number;
+  max_orders: number;
+}
+
+export async function fetchCampaignMetadata(cities: string[] = []): Promise<CampaignMetadata> {
+  const res = await fetch(`${API_BASE}/api/chat/metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cities }),
+  });
+  if (!res.ok) throw new Error('Failed to fetch campaign metadata');
+  return res.json();
 }
 
 export async function fetchAudienceRecommendations(): Promise<AudienceRecommendation[]> {

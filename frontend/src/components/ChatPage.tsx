@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, Brain, ChevronRight, ChevronLeft, Sparkles, X, MessageSquare, Check, Play } from 'lucide-react';
+import { Send, Bot, Brain, ChevronRight, ChevronLeft, Sparkles, X, Check, Play } from 'lucide-react';
 import {
   planCampaign,
   executeCampaign,
@@ -9,6 +9,7 @@ import {
   fetchStrategyRecommendation,
   fetchMessageRecommendations,
   fetchSegmentCount,
+  fetchCampaignMetadata,
   type AudienceRecommendation,
   type StrategyRecommendation,
   type MessageRecommendation,
@@ -33,10 +34,18 @@ export default function ChatPage() {
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [minSpent, setMinSpent] = useState<string>('');
+  const [maxSpent, setMaxSpent] = useState<string>('');
   const [minOrders, setMinOrders] = useState<string>('');
+  const [maxOrders, setMaxOrders] = useState<string>('');
   const [selectedGoal, setSelectedGoal] = useState<string>('');
   const [selectedChannel, setSelectedChannel] = useState<string>('whatsapp');
   const [messageTemplate, setMessageTemplate] = useState<string>('');
+
+  // ── Database-Driven Metadata State ──
+  const [availableCities, setAvailableCities] = useState<{ city: string; count: number }[]>([]);
+  const [availableTags, setAvailableTags] = useState<{ tag: string; count: number }[]>([]);
+  const [maxSpentLimit, setMaxSpentLimit] = useState<number>(100000);
+  const [maxOrdersLimit, setMaxOrdersLimit] = useState<number>(20);
 
   // ── Recommendations & Count State ──
   const [audienceRecs, setAudienceRecs] = useState<AudienceRecommendation[]>([]);
@@ -74,14 +83,39 @@ export default function ChatPage() {
 
   const copilotEndRef = useRef<HTMLDivElement>(null);
 
-  // ── Predefined list options ──
-  const availableCities = ['Delhi', 'Mumbai', 'Bangalore', 'Pune'];
-  const availableTags = ['vip', 'active', 'lapsed', 'new'];
-
   // Scroll copilot messages
   useEffect(() => {
     copilotEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [copilotMessages, copilotOpen]);
+
+  // Load initial metadata and limits
+  useEffect(() => {
+    const initMetadata = async () => {
+      try {
+        const meta = await fetchCampaignMetadata([]);
+        setAvailableCities(meta.cities);
+        setAvailableTags(meta.tags);
+        if (meta.max_spent > 0) setMaxSpentLimit(meta.max_spent);
+        if (meta.max_orders > 0) setMaxOrdersLimit(meta.max_orders);
+      } catch (err) {
+        console.error('Failed to fetch initial metadata', err);
+      }
+    };
+    initMetadata();
+  }, []);
+
+  // Update tag counts dynamically when selectedCities changes
+  useEffect(() => {
+    const loadTagMetadata = async () => {
+      try {
+        const meta = await fetchCampaignMetadata(selectedCities);
+        setAvailableTags(meta.tags);
+      } catch (err) {
+        console.error('Failed to update tag metadata', err);
+      }
+    };
+    loadTagMetadata();
+  }, [selectedCities]);
 
   // Step 1: Load audience recommendations
   useEffect(() => {
@@ -109,7 +143,9 @@ export default function ChatPage() {
           cities: selectedCities,
           tags: selectedTags,
           min_spent: minSpent === '' ? null : Number(minSpent),
-          min_orders: minOrders === '' ? null : Number(minOrders)
+          max_spent: maxSpent === '' ? null : Number(maxSpent),
+          min_orders: minOrders === '' ? null : Number(minOrders),
+          max_orders: maxOrders === '' ? null : Number(maxOrders)
         };
         const rec = await fetchStrategyRecommendation(filters);
         setStrategyRec(rec);
@@ -120,7 +156,7 @@ export default function ChatPage() {
       }
     };
     loadStrategyRec();
-  }, [currentStep, selectedCities, selectedTags, minSpent, minOrders]);
+  }, [currentStep, selectedCities, selectedTags, minSpent, maxSpent, minOrders, maxOrders]);
 
   // Step 3: Load message recommendations
   useEffect(() => {
@@ -153,7 +189,9 @@ export default function ChatPage() {
           cities: selectedCities,
           tags: selectedTags,
           min_spent: minSpent === '' ? null : Number(minSpent),
-          min_orders: minOrders === '' ? null : Number(minOrders)
+          max_spent: maxSpent === '' ? null : Number(maxSpent),
+          min_orders: minOrders === '' ? null : Number(minOrders),
+          max_orders: maxOrders === '' ? null : Number(maxOrders)
         };
         const res = await fetchSegmentCount(filters);
         setAudienceCount(res.count);
@@ -166,7 +204,7 @@ export default function ChatPage() {
 
     const timer = setTimeout(loadCount, 300);
     return () => clearTimeout(timer);
-  }, [selectedCities, selectedTags, minSpent, minOrders]);
+  }, [selectedCities, selectedTags, minSpent, maxSpent, minOrders, maxOrders]);
 
   // ── Audience description helper ──
   const getAudienceDescription = () => {
@@ -179,11 +217,23 @@ export default function ChatPage() {
     if (selectedCities.length > 0) {
       parts.push(`in ${selectedCities.join(', ')}`);
     }
-    if (minSpent) {
-      parts.push(`who spent at least ₹${Number(minSpent).toLocaleString()}`);
+    if (minSpent || maxSpent) {
+      if (minSpent && maxSpent) {
+        parts.push(`who spent between ₹${Number(minSpent).toLocaleString()} and ₹${Number(maxSpent).toLocaleString()}`);
+      } else if (minSpent) {
+        parts.push(`who spent at least ₹${Number(minSpent).toLocaleString()}`);
+      } else if (maxSpent) {
+        parts.push(`who spent at most ₹${Number(maxSpent).toLocaleString()}`);
+      }
     }
-    if (minOrders) {
-      parts.push(`with at least ${minOrders} orders`);
+    if (minOrders || maxOrders) {
+      if (minOrders && maxOrders) {
+        parts.push(`with between ${minOrders} and ${maxOrders} orders`);
+      } else if (minOrders) {
+        parts.push(`with at least ${minOrders} orders`);
+      } else if (maxOrders) {
+        parts.push(`with at most ${maxOrders} orders`);
+      }
     }
     return parts.join(' ');
   };
@@ -204,8 +254,55 @@ export default function ChatPage() {
   const applyAudienceSuggestion = (rec: AudienceRecommendation) => {
     setSelectedCities(rec.filters.cities || []);
     setSelectedTags(rec.filters.tags || []);
-    setMinSpent(rec.filters.min_spent !== null ? String(rec.filters.min_spent) : '');
-    setMinOrders(rec.filters.min_orders !== null ? String(rec.filters.min_orders) : '');
+    setMinSpent(rec.filters.min_spent !== null && rec.filters.min_spent !== undefined ? String(rec.filters.min_spent) : '');
+    setMaxSpent(rec.filters.max_spent !== null && rec.filters.max_spent !== undefined ? String(rec.filters.max_spent) : '');
+    setMinOrders(rec.filters.min_orders !== null && rec.filters.min_orders !== undefined ? String(rec.filters.min_orders) : '');
+    setMaxOrders(rec.filters.max_orders !== null && rec.filters.max_orders !== undefined ? String(rec.filters.max_orders) : '');
+  };
+
+  // Safeguards for sliders
+  const handleMinSpentChange = (val: string) => {
+    if (val === '0') {
+      setMinSpent('');
+      return;
+    }
+    setMinSpent(val);
+    if (maxSpent && Number(val) > Number(maxSpent)) {
+      setMaxSpent(val);
+    }
+  };
+
+  const handleMaxSpentChange = (val: string) => {
+    if (val === '0' || Number(val) >= maxSpentLimit) {
+      setMaxSpent('');
+      return;
+    }
+    setMaxSpent(val);
+    if (minSpent && Number(val) < Number(minSpent)) {
+      setMinSpent(val);
+    }
+  };
+
+  const handleMinOrdersChange = (val: string) => {
+    if (val === '0') {
+      setMinOrders('');
+      return;
+    }
+    setMinOrders(val);
+    if (maxOrders && Number(val) > Number(maxOrders)) {
+      setMaxOrders(val);
+    }
+  };
+
+  const handleMaxOrdersChange = (val: string) => {
+    if (val === '0' || Number(val) >= maxOrdersLimit) {
+      setMaxOrders('');
+      return;
+    }
+    setMaxOrders(val);
+    if (minOrders && Number(val) < Number(minOrders)) {
+      setMinOrders(val);
+    }
   };
 
   const applyStrategySuggestion = () => {
@@ -253,7 +350,17 @@ export default function ChatPage() {
   };
 
   // Launch approved campaign
-  const handleLaunchCampaign = async () => {
+  const handleLaunchCampaign = async (overrideParams?: {
+    cities?: string[];
+    tags?: string[];
+    minSpent?: string;
+    maxSpent?: string;
+    minOrders?: string;
+    maxOrders?: string;
+    goal?: string;
+    channel?: string;
+    messageTemplate?: string;
+  }) => {
     setExecuting(true);
     setLoadingExecute(true);
     setCampaignResult(null);
@@ -264,21 +371,64 @@ export default function ChatPage() {
       { id: '3', label: 'Creating Campaign', message: 'Setting up records...', status: 'pending' },
     ]);
 
+    const cities = overrideParams?.cities !== undefined ? overrideParams.cities : selectedCities;
+    const tags = overrideParams?.tags !== undefined ? overrideParams.tags : selectedTags;
+    const spentMin = overrideParams?.minSpent !== undefined ? overrideParams.minSpent : minSpent;
+    const spentMax = overrideParams?.maxSpent !== undefined ? overrideParams.maxSpent : maxSpent;
+    const ordersMin = overrideParams?.minOrders !== undefined ? overrideParams.minOrders : minOrders;
+    const ordersMax = overrideParams?.maxOrders !== undefined ? overrideParams.maxOrders : maxOrders;
+    const goal = overrideParams?.goal !== undefined ? overrideParams.goal : selectedGoal;
+    const channel = overrideParams?.channel !== undefined ? overrideParams.channel : selectedChannel;
+    const msgTemplate = overrideParams?.messageTemplate !== undefined ? overrideParams.messageTemplate : messageTemplate;
+
+    const getDesc = () => {
+      let parts: string[] = [];
+      if (tags.length > 0) {
+        parts.push(tags.join(', ').toUpperCase());
+      } else {
+        parts.push('Customers');
+      }
+      if (cities.length > 0) {
+        parts.push(`in ${cities.join(', ')}`);
+      }
+      if (spentMin || spentMax) {
+        if (spentMin && spentMax) {
+          parts.push(`who spent between ₹${Number(spentMin).toLocaleString()} and ₹${Number(spentMax).toLocaleString()}`);
+        } else if (spentMin) {
+          parts.push(`who spent at least ₹${Number(spentMin).toLocaleString()}`);
+        } else if (spentMax) {
+          parts.push(`who spent at most ₹${Number(spentMax).toLocaleString()}`);
+        }
+      }
+      if (ordersMin || ordersMax) {
+        if (ordersMin && ordersMax) {
+          parts.push(`with between ${ordersMin} and ${ordersMax} orders`);
+        } else if (ordersMin) {
+          parts.push(`with at least ${ordersMin} orders`);
+        } else if (ordersMax) {
+          parts.push(`with at most ${ordersMax} orders`);
+        }
+      }
+      return parts.join(' ');
+    };
+
+    const audienceDescription = getDesc();
+
     try {
       const brief = {
-        goal: selectedGoal,
-        audience: getAudienceDescription(),
-        channel: selectedChannel,
-        message_idea: messageTemplate
+        goal: goal,
+        audience: audienceDescription,
+        channel: channel,
+        message_idea: msgTemplate
       };
 
       const { conversation_id } = await executeCampaign(
         brief,
-        getAudienceDescription(),
-        selectedChannel,
-        messageTemplate,
+        audienceDescription,
+        channel,
+        msgTemplate,
         '',
-        messageTemplate
+        msgTemplate
       );
 
       connectSSE(conversation_id, (event) => {
@@ -362,7 +512,9 @@ export default function ChatPage() {
         cities: selectedCities,
         tags: selectedTags,
         min_spent: minSpent === '' ? null : Number(minSpent),
+        max_spent: maxSpent === '' ? null : Number(maxSpent),
         min_orders: minOrders === '' ? null : Number(minOrders),
+        max_orders: maxOrders === '' ? null : Number(maxOrders),
         goal: selectedGoal,
         channel: selectedChannel
       };
@@ -381,9 +533,25 @@ export default function ChatPage() {
           if (updates.cities) setSelectedCities(updates.cities);
           if (updates.tags) setSelectedTags(updates.tags);
           if (updates.min_spent !== undefined) setMinSpent(updates.min_spent !== null ? String(updates.min_spent) : '');
+          if (updates.max_spent !== undefined) setMaxSpent(updates.max_spent !== null ? String(updates.max_spent) : '');
           if (updates.min_orders !== undefined) setMinOrders(updates.min_orders !== null ? String(updates.min_orders) : '');
+          if (updates.max_orders !== undefined) setMaxOrders(updates.max_orders !== null ? String(updates.max_orders) : '');
           if (updates.goal) setSelectedGoal(updates.goal);
           if (updates.channel) setSelectedChannel(updates.channel);
+
+          if (state.trigger_launch) {
+            handleLaunchCampaign({
+              cities: updates.cities,
+              tags: updates.tags,
+              minSpent: updates.min_spent !== undefined ? (updates.min_spent !== null ? String(updates.min_spent) : '') : undefined,
+              maxSpent: updates.max_spent !== undefined ? (updates.max_spent !== null ? String(updates.max_spent) : '') : undefined,
+              minOrders: updates.min_orders !== undefined ? (updates.min_orders !== null ? String(updates.min_orders) : '') : undefined,
+              maxOrders: updates.max_orders !== undefined ? (updates.max_orders !== null ? String(updates.max_orders) : '') : undefined,
+              goal: updates.goal,
+              channel: updates.channel,
+              messageTemplate: updates.message_template || messageTemplate
+            });
+          }
 
           setLoadingCopilot(false);
         } else if (event.type === 'error') {
@@ -403,7 +571,9 @@ export default function ChatPage() {
     setSelectedCities([]);
     setSelectedTags([]);
     setMinSpent('');
+    setMaxSpent('');
     setMinOrders('');
+    setMaxOrders('');
     setSelectedGoal('');
     setSelectedChannel('whatsapp');
     setMessageTemplate('');
@@ -413,7 +583,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="campaign-studio" style={{ paddingBottom: '5rem' }}>
+    <div className="campaign-studio" style={{ paddingBottom: '6rem' }}>
       {/* Dynamic CSS Inject */}
       <style>{`
         .wizard-graph-flow {
@@ -421,10 +591,10 @@ export default function ChatPage() {
           align-items: center;
           justify-content: space-between;
           margin-bottom: 2rem;
-          background: rgba(20, 20, 20, 0.6);
-          backdrop-filter: blur(12px);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.45);
+          backdrop-filter: blur(14px);
+          border: 1px solid rgba(255, 255, 255, 0.28);
+          border-radius: 16px;
           padding: 1.5rem 2rem;
         }
         .wizard-node {
@@ -440,20 +610,20 @@ export default function ChatPage() {
           width: 40px;
           height: 40px;
           border-radius: 50%;
-          background: #1e1e24;
-          border: 2px solid rgba(255, 255, 255, 0.2);
+          background: rgba(255, 255, 255, 0.3);
+          border: 2px solid rgba(255, 255, 255, 0.28);
           display: flex;
           align-items: center;
           justify-content: center;
           font-weight: 600;
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary);
           transition: all 0.3s ease;
         }
         .wizard-node.active .wizard-node-circle {
-          border-color: #6366f1;
+          border-color: var(--orange-500);
           color: #fff;
-          box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
-          background: radial-gradient(circle, #6366f1 0%, #312e81 100%);
+          box-shadow: 0 0 15px rgba(249, 115, 22, 0.4);
+          background: radial-gradient(circle, var(--orange-400) 0%, var(--orange-600) 100%);
           transform: scale(1.1);
         }
         .wizard-node.completed .wizard-node-circle {
@@ -465,10 +635,11 @@ export default function ChatPage() {
           margin-top: 0.5rem;
           font-size: 0.85rem;
           font-weight: 500;
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-muted);
         }
         .wizard-node.active .wizard-node-label {
-          color: #fff;
+          color: var(--text-primary);
+          font-weight: 600;
         }
         .wizard-node.completed .wizard-node-label {
           color: #10b981;
@@ -476,7 +647,7 @@ export default function ChatPage() {
         .wizard-line {
           flex-grow: 1;
           height: 3px;
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.28);
           margin: 0 1rem;
           position: relative;
           top: -16px;
@@ -492,25 +663,26 @@ export default function ChatPage() {
           min-height: 480px;
         }
         .wizard-left-panel {
-          background: rgba(20, 20, 25, 0.5);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.3);
+          border: 1px solid rgba(255, 255, 255, 0.28);
           border-radius: 16px;
           padding: 1.5rem;
-          backdrop-filter: blur(16px);
+          backdrop-filter: blur(14px);
           display: flex;
           flex-direction: column;
           gap: 1.5rem;
+          box-shadow: var(--glass-shadow);
         }
         .wizard-right-panel {
-          background: rgba(15, 23, 42, 0.4);
-          border: 1px solid rgba(99, 102, 241, 0.15);
+          background: rgba(255, 255, 255, 0.2);
+          border: 1px solid rgba(249, 115, 22, 0.2);
           border-radius: 16px;
           padding: 1.5rem;
-          backdrop-filter: blur(16px);
+          backdrop-filter: blur(14px);
           display: flex;
           flex-direction: column;
           gap: 1.2rem;
-          box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.05);
+          box-shadow: inset 0 0 20px rgba(249, 115, 22, 0.03);
         }
         .panel-title {
           font-size: 1.1rem;
@@ -518,13 +690,13 @@ export default function ChatPage() {
           display: flex;
           align-items: center;
           gap: 0.5rem;
-          color: #fff;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          color: var(--text-primary);
+          border-bottom: 1px solid var(--glass-border-subtle);
           padding-bottom: 0.75rem;
           margin: 0;
         }
         .ai-recommendation-title {
-          color: #818cf8;
+          color: var(--orange-600);
         }
         .wizard-form-group {
           display: flex;
@@ -534,7 +706,7 @@ export default function ChatPage() {
         .wizard-label {
           font-size: 0.85rem;
           font-weight: 500;
-          color: rgba(255, 255, 255, 0.7);
+          color: var(--text-primary);
         }
         .tag-selector-grid {
           display: flex;
@@ -544,18 +716,22 @@ export default function ChatPage() {
         .tag-checkbox-btn {
           padding: 0.45rem 0.9rem;
           border-radius: 8px;
-          background: rgba(255, 255, 255, 0.04);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          color: rgba(255, 255, 255, 0.8);
+          background: rgba(255, 255, 255, 0.25);
+          border: 1px solid var(--glass-border-subtle);
+          color: var(--text-primary);
           font-size: 0.85rem;
           cursor: pointer;
           transition: all 0.2s ease;
         }
+        .tag-checkbox-btn:hover {
+          background: rgba(255, 255, 255, 0.45);
+        }
         .tag-checkbox-btn.selected {
-          background: rgba(99, 102, 241, 0.15);
-          border-color: #6366f1;
-          color: #fff;
-          box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+          background: var(--orange-100);
+          border-color: var(--orange-500);
+          color: var(--orange-700);
+          box-shadow: 0 0 10px rgba(249, 115, 22, 0.15);
+          font-weight: 600;
         }
         .slider-container {
           display: flex;
@@ -566,15 +742,15 @@ export default function ChatPage() {
           display: flex;
           justify-content: space-between;
           font-size: 0.8rem;
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-secondary);
         }
         .slider-val-box span.active {
-          color: #fff;
+          color: var(--text-primary);
           font-weight: 600;
         }
         .ai-rec-card {
-          background: rgba(30, 41, 59, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.2);
+          border: 1px solid var(--glass-border-subtle);
           border-radius: 12px;
           padding: 1.1rem;
           display: flex;
@@ -583,9 +759,9 @@ export default function ChatPage() {
           transition: all 0.3s ease;
         }
         .ai-rec-card:hover {
-          border-color: rgba(99, 102, 241, 0.3);
+          border-color: rgba(249, 115, 22, 0.3);
           transform: translateY(-2px);
-          background: rgba(30, 41, 59, 0.6);
+          background: rgba(255, 255, 255, 0.35);
         }
         .ai-rec-header {
           display: flex;
@@ -595,29 +771,44 @@ export default function ChatPage() {
         .ai-rec-name {
           font-weight: 600;
           font-size: 0.95rem;
-          color: #fff;
+          color: var(--text-primary);
         }
         .ai-rec-count-badge {
           font-size: 0.75rem;
-          background: rgba(16, 185, 129, 0.15);
+          background: rgba(16, 185, 129, 0.1);
           border: 1px solid #10b981;
-          color: #10b981;
+          color: #047857;
           padding: 0.15rem 0.5rem;
           border-radius: 12px;
           font-weight: 600;
         }
         .ai-rec-reason {
           font-size: 0.8rem;
-          color: rgba(255, 255, 255, 0.6);
+          color: var(--text-secondary);
           line-height: 1.4;
           margin: 0;
+        }
+        .ai-rec-analytics {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+          background: rgba(255, 255, 255, 0.25);
+          padding: 0.4rem 0.6rem;
+          border-radius: 6px;
+          border: 1px solid var(--glass-border-subtle);
+          margin: 0.25rem 0;
+        }
+        .ai-rec-analytics .divider {
+          color: var(--glass-border);
         }
         .ai-rec-apply-btn {
           align-self: flex-start;
           font-size: 0.8rem;
           padding: 0.35rem 0.75rem;
           border-radius: 6px;
-          background: #6366f1;
+          background: var(--orange-500);
           color: #fff;
           border: none;
           cursor: pointer;
@@ -625,8 +816,8 @@ export default function ChatPage() {
           transition: all 0.2s ease;
         }
         .ai-rec-apply-btn:hover {
-          background: #4f46e5;
-          box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+          background: var(--orange-600);
+          box-shadow: 0 0 10px rgba(249, 115, 22, 0.4);
         }
         .matching-badge-container {
           display: flex;
@@ -653,128 +844,7 @@ export default function ChatPage() {
         }
         .matching-text {
           font-size: 0.9rem;
-          color: rgba(255, 255, 255, 0.8);
-        }
-        .floating-copilot-btn {
-          position: fixed;
-          bottom: 2rem;
-          right: 2rem;
-          width: 56px;
-          height: 56px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-          color: #fff;
-          border: none;
-          box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          z-index: 1000;
-          transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        .floating-copilot-btn:hover {
-          transform: scale(1.08) rotate(5deg);
-        }
-        .floating-copilot-chat {
-          position: fixed;
-          bottom: 6rem;
-          right: 2rem;
-          width: 380px;
-          height: 500px;
-          border-radius: 16px;
-          background: rgba(15, 23, 42, 0.95);
-          border: 1px solid rgba(99, 102, 241, 0.3);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-          backdrop-filter: blur(20px);
-          z-index: 1000;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          animation: slideUp 0.3s ease;
-        }
-        @keyframes slideUp {
-          from { transform: translateY(20px); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        .copilot-header {
-          padding: 1rem;
-          background: rgba(99, 102, 241, 0.15);
-          border-bottom: 1px solid rgba(99, 102, 241, 0.2);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .copilot-header-title {
-          font-weight: 600;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          color: #fff;
-        }
-        .copilot-messages {
-          flex-grow: 1;
-          padding: 1rem;
-          overflow-y: auto;
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-        }
-        .copilot-msg {
-          max-width: 85%;
-          padding: 0.7rem 0.9rem;
-          border-radius: 12px;
-          font-size: 0.85rem;
-          line-height: 1.4;
-        }
-        .copilot-msg-user {
-          background: #6366f1;
-          color: #fff;
-          align-self: flex-end;
-          border-bottom-right-radius: 2px;
-        }
-        .copilot-msg-assistant {
-          background: rgba(255, 255, 255, 0.08);
-          border: 1px solid rgba(255, 255, 255, 0.05);
-          color: rgba(255, 255, 255, 0.9);
-          align-self: flex-start;
-          border-bottom-left-radius: 2px;
-        }
-        .copilot-input-bar {
-          padding: 0.75rem;
-          background: rgba(0, 0, 0, 0.3);
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
-          display: flex;
-          gap: 0.5rem;
-        }
-        .copilot-input {
-          flex-grow: 1;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 8px;
-          color: #fff;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.85rem;
-          outline: none;
-        }
-        .copilot-input:focus {
-          border-color: #6366f1;
-        }
-        .copilot-send-btn {
-          background: #6366f1;
-          color: #fff;
-          border: none;
-          width: 34px;
-          height: 34px;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .copilot-send-btn:hover {
-          background: #4f46e5;
+          color: var(--text-primary);
         }
         .msg-var-selector {
           display: flex;
@@ -782,8 +852,8 @@ export default function ChatPage() {
           gap: 1rem;
         }
         .msg-var-card {
-          background: rgba(30, 41, 59, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.2);
+          border: 1px solid var(--glass-border-subtle);
           border-radius: 12px;
           padding: 1.1rem;
           cursor: pointer;
@@ -792,10 +862,13 @@ export default function ChatPage() {
           flex-direction: column;
           gap: 0.5rem;
         }
+        .msg-var-card:hover {
+          background: rgba(255, 255, 255, 0.35);
+        }
         .msg-var-card.active {
-          border-color: #6366f1;
-          background: rgba(99, 102, 241, 0.08);
-          box-shadow: 0 0 15px rgba(99, 102, 241, 0.1);
+          border-color: var(--orange-500);
+          background: var(--orange-50);
+          box-shadow: 0 0 15px rgba(249, 115, 22, 0.1);
         }
         .msg-var-header {
           display: flex;
@@ -804,19 +877,20 @@ export default function ChatPage() {
           font-weight: 600;
         }
         .msg-var-type {
-          color: #818cf8;
+          color: var(--orange-600);
         }
         .msg-var-content {
-          font-size: 0.8rem;
-          color: rgba(255, 255, 255, 0.85);
+          font-size: 0.85rem;
+          color: var(--text-primary);
           white-space: pre-wrap;
-          background: rgba(0, 0, 0, 0.2);
+          background: rgba(255, 255, 255, 0.3);
+          border: 1px solid var(--glass-border-subtle);
           padding: 0.75rem;
           border-radius: 8px;
         }
         .msg-var-reason {
           font-size: 0.75rem;
-          color: rgba(255, 255, 255, 0.5);
+          color: var(--text-secondary);
           font-style: italic;
         }
         .goal-deck {
@@ -827,9 +901,9 @@ export default function ChatPage() {
         .goal-card {
           padding: 1.2rem;
           border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          background: rgba(255, 255, 255, 0.02);
-          color: rgba(255, 255, 255, 0.7);
+          border: 1px solid var(--glass-border-subtle);
+          background: rgba(255, 255, 255, 0.2);
+          color: var(--text-secondary);
           cursor: pointer;
           font-weight: 500;
           font-size: 0.9rem;
@@ -841,17 +915,21 @@ export default function ChatPage() {
           justify-content: center;
           min-height: 80px;
         }
+        .goal-card:hover {
+          background: rgba(255, 255, 255, 0.35);
+        }
         .goal-card.active {
-          border-color: #6366f1;
-          background: rgba(99, 102, 241, 0.1);
-          color: #fff;
-          box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+          border-color: var(--orange-500);
+          background: var(--orange-100);
+          color: var(--orange-700);
+          font-weight: 600;
+          box-shadow: 0 0 15px rgba(249, 115, 22, 0.15);
         }
         .wizard-footer {
           display: flex;
           justify-content: space-between;
           margin-top: 2rem;
-          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          border-top: 1px solid var(--glass-border-subtle);
           padding-top: 1.5rem;
         }
         .wizard-btn {
@@ -866,21 +944,21 @@ export default function ChatPage() {
           transition: all 0.2s ease;
         }
         .wizard-btn-prev {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          color: rgba(255, 255, 255, 0.8);
+          background: rgba(255, 255, 255, 0.3);
+          border: 1px solid var(--glass-border);
+          color: var(--text-primary);
         }
         .wizard-btn-prev:hover {
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.45);
         }
         .wizard-btn-next {
-          background: #6366f1;
+          background: var(--orange-500);
           border: none;
           color: #fff;
         }
         .wizard-btn-next:hover {
-          background: #4f46e5;
-          box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+          background: var(--orange-600);
+          box-shadow: 0 0 15px rgba(249, 115, 22, 0.4);
         }
         .review-panel {
           grid-column: span 2;
@@ -889,8 +967,8 @@ export default function ChatPage() {
           gap: 1.5rem;
         }
         .review-card {
-          background: rgba(20, 20, 25, 0.6);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.3);
+          border: 1px solid var(--glass-border);
           border-radius: 16px;
           padding: 1.5rem;
           display: grid;
@@ -904,38 +982,60 @@ export default function ChatPage() {
         }
         .review-label {
           font-size: 0.8rem;
-          color: rgba(255, 255, 255, 0.4);
+          color: var(--text-secondary);
           text-transform: uppercase;
           letter-spacing: 0.05em;
         }
         .review-value {
           font-size: 1rem;
-          color: #fff;
+          color: var(--text-primary);
           font-weight: 500;
         }
         .review-sql-box {
           grid-column: span 2;
-          background: rgba(0, 0, 0, 0.2);
+          background: rgba(255, 255, 255, 0.2);
           border-radius: 8px;
           padding: 1rem;
           font-family: monospace;
           font-size: 0.85rem;
-          color: #38bdf8;
+          color: var(--orange-700);
           max-height: 120px;
           overflow-y: auto;
           white-space: pre-wrap;
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--glass-border-subtle);
         }
         .review-msg-box {
           grid-column: span 2;
-          background: rgba(99, 102, 241, 0.05);
-          border: 1px solid rgba(99, 102, 241, 0.1);
+          background: rgba(249, 115, 22, 0.05);
+          border: 1px solid rgba(249, 115, 22, 0.1);
           border-radius: 12px;
           padding: 1.2rem;
           font-size: 0.95rem;
-          color: rgba(255, 255, 255, 0.9);
+          color: var(--text-primary);
           white-space: pre-wrap;
           line-height: 1.5;
+        }
+        .thinking-dots {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .thinking-dots span {
+          width: 6px;
+          height: 6px;
+          background-color: var(--orange-500);
+          border-radius: 50%;
+          animation: thinking-bounce 1.4s infinite ease-in-out both;
+        }
+        .thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes thinking-bounce {
+          0%, 80%, 100% { transform: scale(0); }
+          40% { transform: scale(1.0); }
+        }
+        @keyframes slideUp {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
         }
       `}</style>
 
@@ -990,13 +1090,13 @@ export default function ChatPage() {
                   <div className="wizard-form-group">
                     <label className="wizard-label">Cities</label>
                     <div className="tag-selector-grid">
-                      {availableCities.map(city => (
+                      {availableCities.map(({ city, count }) => (
                         <button
                           key={city}
                           onClick={() => toggleCity(city)}
                           className={`tag-checkbox-btn ${selectedCities.includes(city) ? 'selected' : ''}`}
                         >
-                          {city}
+                          {city} ({count})
                         </button>
                       ))}
                     </div>
@@ -1006,54 +1106,98 @@ export default function ChatPage() {
                   <div className="wizard-form-group">
                     <label className="wizard-label">Audience Tags</label>
                     <div className="tag-selector-grid">
-                      {availableTags.map(tag => (
+                      {availableTags.map(({ tag, count }) => (
                         <button
                           key={tag}
                           onClick={() => toggleTag(tag)}
                           className={`tag-checkbox-btn ${selectedTags.includes(tag) ? 'selected' : ''}`}
                         >
-                          {tag.toUpperCase()}
+                          {tag.toUpperCase()} ({count})
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Min Spent slider */}
-                  <div className="wizard-form-group slider-container">
-                    <div className="slider-val-box">
-                      <span className="wizard-label">Min Total Spent</span>
-                      <span className={minSpent ? 'active' : ''}>
-                        {minSpent ? `₹${Number(minSpent).toLocaleString()}+` : 'Any'}
-                      </span>
+                  {/* Spend limits */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                    {/* Min Spent slider */}
+                    <div className="wizard-form-group slider-container">
+                      <div className="slider-val-box">
+                        <span className="wizard-label">Min Spend</span>
+                        <span className={minSpent ? 'active' : ''}>
+                          {minSpent ? `₹${Number(minSpent).toLocaleString()}` : '₹0'}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max={maxSpentLimit}
+                        step={Math.max(1, Math.round(maxSpentLimit / 100))}
+                        value={minSpent || '0'}
+                        onChange={e => handleMinSpentChange(e.target.value)}
+                        style={{ accentColor: 'var(--orange-500)' }}
+                      />
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100000"
-                      step="5000"
-                      value={minSpent || '0'}
-                      onChange={e => setMinSpent(e.target.value === '0' ? '' : e.target.value)}
-                      style={{ accentColor: '#6366f1' }}
-                    />
+
+                    {/* Max Spent slider */}
+                    <div className="wizard-form-group slider-container">
+                      <div className="slider-val-box">
+                        <span className="wizard-label">Max Spend</span>
+                        <span className={maxSpent ? 'active' : ''}>
+                          {maxSpent ? `₹${Number(maxSpent).toLocaleString()}` : `₹${maxSpentLimit.toLocaleString()}`}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max={maxSpentLimit}
+                        step={Math.max(1, Math.round(maxSpentLimit / 100))}
+                        value={maxSpent || String(maxSpentLimit)}
+                        onChange={e => handleMaxSpentChange(e.target.value)}
+                        style={{ accentColor: 'var(--orange-500)' }}
+                      />
+                    </div>
                   </div>
 
-                  {/* Min Orders slider */}
-                  <div className="wizard-form-group slider-container">
-                    <div className="slider-val-box">
-                      <span className="wizard-label">Min Total Orders</span>
-                      <span className={minOrders ? 'active' : ''}>
-                        {minOrders ? `${minOrders}+ orders` : 'Any'}
-                      </span>
+                  {/* Orders limits */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                    {/* Min Orders slider */}
+                    <div className="wizard-form-group slider-container">
+                      <div className="slider-val-box">
+                        <span className="wizard-label">Min Orders</span>
+                        <span className={minOrders ? 'active' : ''}>
+                          {minOrders ? `${minOrders}` : '0'}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max={maxOrdersLimit}
+                        step="1"
+                        value={minOrders || '0'}
+                        onChange={e => handleMinOrdersChange(e.target.value)}
+                        style={{ accentColor: 'var(--orange-500)' }}
+                      />
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="20"
-                      step="1"
-                      value={minOrders || '0'}
-                      onChange={e => setMinOrders(e.target.value === '0' ? '' : e.target.value)}
-                      style={{ accentColor: '#6366f1' }}
-                    />
+
+                    {/* Max Orders slider */}
+                    <div className="wizard-form-group slider-container">
+                      <div className="slider-val-box">
+                        <span className="wizard-label">Max Orders</span>
+                        <span className={maxOrders ? 'active' : ''}>
+                          {maxOrders ? `${maxOrders}` : `${maxOrdersLimit}`}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max={maxOrdersLimit}
+                        step="1"
+                        value={maxOrders || String(maxOrdersLimit)}
+                        onChange={e => handleMaxOrdersChange(e.target.value)}
+                        style={{ accentColor: 'var(--orange-500)' }}
+                      />
+                    </div>
                   </div>
 
                   {/* Dynamic customers count badge */}
@@ -1071,7 +1215,7 @@ export default function ChatPage() {
                   {loadingAudience ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
                       <div className="thinking-dots"><span /><span /><span /></div>
-                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Analyzing database statistics...</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Analyzing database statistics...</span>
                     </div>
                   ) : audienceRecs.length > 0 ? (
                     audienceRecs.map((rec, i) => (
@@ -1081,6 +1225,14 @@ export default function ChatPage() {
                           <span className="ai-rec-count-badge">~{rec.count} matches</span>
                         </div>
                         <p className="ai-rec-reason">{rec.reason}</p>
+                        
+                        {/* Segment Analytics */}
+                        <div className="ai-rec-analytics">
+                          <span>Avg Spent: <strong>₹{Math.round(rec.avg_spent || 0).toLocaleString()}</strong></span>
+                          <span className="divider">|</span>
+                          <span>Avg Orders: <strong>{(rec.avg_orders || 0).toFixed(1)}</strong></span>
+                        </div>
+
                         <button
                           className="ai-rec-apply-btn"
                           onClick={() => applyAudienceSuggestion(rec)}
@@ -1090,7 +1242,7 @@ export default function ChatPage() {
                       </div>
                     ))
                   ) : (
-                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
                       No segment recommendations available. Adjust data ingestion.
                     </div>
                   )}
@@ -1132,7 +1284,7 @@ export default function ChatPage() {
                       value={selectedChannel}
                       onChange={e => setSelectedChannel(e.target.value)}
                       className="tag-checkbox-btn"
-                      style={{ width: '100%', outline: 'none', background: 'rgba(15,15,20,0.8)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '0.6rem' }}
+                      style={{ width: '100%', outline: 'none', background: 'rgba(255,255,255,0.4)', border: '1px solid var(--glass-border-subtle)', color: 'var(--text-primary)', padding: '0.6rem' }}
                     >
                       <option value="whatsapp">WhatsApp</option>
                       <option value="email">Email</option>
@@ -1148,18 +1300,18 @@ export default function ChatPage() {
                   {loadingStrategy ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
                       <div className="thinking-dots"><span /><span /><span /></div>
-                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Evaluating filters for channel matching...</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Evaluating filters for channel matching...</span>
                     </div>
                   ) : strategyRec ? (
-                    <div className="ai-rec-card" style={{ border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(15,23,42,0.6)' }}>
-                      <div className="ai-rec-header" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.5rem' }}>
-                        <span className="ai-rec-name" style={{ color: '#818cf8' }}>Recommended Plan</span>
+                    <div className="ai-rec-card" style={{ border: '1px solid rgba(249, 115, 22, 0.25)', background: 'rgba(255,255,255,0.25)' }}>
+                      <div className="ai-rec-header" style={{ borderBottom: '1px solid var(--glass-border-subtle)', paddingBottom: '0.5rem' }}>
+                        <span className="ai-rec-name" style={{ color: 'var(--orange-600)' }}>Recommended Plan</span>
                       </div>
-                      <div style={{ margin: '0.5rem 0', fontSize: '0.85rem' }}>
+                      <div style={{ margin: '0.5rem 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
                         <div><strong>Goal:</strong> {strategyRec.goal}</div>
                         <div style={{ marginTop: '0.2rem' }}><strong>Channel:</strong> {strategyRec.channel.toUpperCase()}</div>
                       </div>
-                      <p className="ai-rec-reason" style={{ fontSize: '0.85rem' }}>{strategyRec.reason}</p>
+                      <p className="ai-rec-reason" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{strategyRec.reason}</p>
                       <button
                         className="ai-rec-apply-btn"
                         onClick={applyStrategySuggestion}
@@ -1169,7 +1321,7 @@ export default function ChatPage() {
                       </button>
                     </div>
                   ) : (
-                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
                       Set segment filters to generate strategy recommendations.
                     </div>
                   )}
@@ -1191,10 +1343,10 @@ export default function ChatPage() {
                       onChange={e => setMessageTemplate(e.target.value)}
                       className="chat-input"
                       rows={10}
-                      style={{ background: 'rgba(10,10,15,0.5)', width: '100%', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '0.8rem', outline: 'none', borderRadius: '8px', fontSize: '0.9rem', lineHeight: '1.5', fontFamily: 'inherit' }}
+                      style={{ background: 'rgba(255,255,255,0.25)', width: '100%', border: '1px solid var(--glass-border-subtle)', color: 'var(--text-primary)', padding: '0.8rem', outline: 'none', borderRadius: '8px', fontSize: '0.9rem', lineHeight: '1.5', fontFamily: 'inherit' }}
                       placeholder="Your campaign copy..."
                     />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.25rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
                       <span>Placeholders available: <code>{"{{name}}"}</code>, <code>{"{{city}}"}</code></span>
                       <span>{messageTemplate.length} characters</span>
                     </div>
@@ -1207,7 +1359,7 @@ export default function ChatPage() {
                   {loadingMessage ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
                       <div className="thinking-dots"><span /><span /><span /></div>
-                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Drafting channel-appropriate copy...</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Drafting channel-appropriate copy...</span>
                     </div>
                   ) : messageRecs.length > 0 ? (
                     <div className="msg-var-selector">
@@ -1227,7 +1379,7 @@ export default function ChatPage() {
                       ))}
                     </div>
                   ) : (
-                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
                       No copy variants generated. Complete previous stages.
                     </div>
                   )}
@@ -1243,7 +1395,7 @@ export default function ChatPage() {
                 <div className="review-card">
                   <div className="review-item">
                     <span className="review-label">Audience Segment</span>
-                    <span className="review-value" style={{ color: '#818cf8' }}>{getAudienceDescription()}</span>
+                    <span className="review-value" style={{ color: 'var(--orange-600)' }}>{getAudienceDescription()}</span>
                   </div>
                   
                   <div className="review-item">
@@ -1320,7 +1472,7 @@ export default function ChatPage() {
                 className="wizard-btn wizard-btn-next"
                 style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', boxShadow: '0 0 15px rgba(16,185,129,0.3)' }}
                 disabled={loadingExecute || audienceCount === 0}
-                onClick={handleLaunchCampaign}
+                onClick={() => handleLaunchCampaign()}
               >
                 <Play size={16} /> Launch Campaign End-to-End
               </button>
@@ -1329,58 +1481,185 @@ export default function ChatPage() {
         </>
       )}
 
-      {/* Floating AI Copilot Chat Toggle Button */}
-      <button
-        className="floating-copilot-btn"
-        onClick={() => setCopilotOpen(prev => !prev)}
+      {/* Bottom Center Floating Copilot Chat Bar Container */}
+      <div
+        className="floating-copilot-container"
+        style={{
+          position: 'fixed',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '90%',
+          maxWidth: '750px',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'stretch',
+          pointerEvents: 'none'
+        }}
       >
-        {copilotOpen ? <X size={22} /> : <MessageSquare size={22} />}
-      </button>
-
-      {/* Floating Drawer / Chat Box */}
-      {copilotOpen && (
-        <div className="floating-copilot-chat">
-          <div className="copilot-header">
-            <span className="copilot-header-title"><Bot size={18} style={{ color: '#818cf8' }} /> Campaign Copilot</span>
-            <button style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer' }} onClick={() => setCopilotOpen(false)}><X size={16} /></button>
-          </div>
-          
-          <div className="copilot-messages">
-            {copilotMessages.map(msg => (
-              <div key={msg.id} className={`copilot-msg copilot-msg-${msg.role}`}>
-                {msg.content}
-              </div>
-            ))}
-            {loadingCopilot && (
-              <div className="copilot-msg copilot-msg-assistant" style={{ opacity: 0.7 }}>
-                Thinking...
-              </div>
-            )}
-            <div ref={copilotEndRef} />
-          </div>
-
-          <div className="copilot-input-bar">
-            <input
-              type="text"
-              value={copilotInput}
-              onChange={e => setCopilotInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') handleSendCopilot();
+        {/* Floating Popover History Window */}
+        {copilotOpen && (
+          <div
+            className="floating-copilot-popover"
+            style={{
+              pointerEvents: 'auto',
+              marginBottom: '12px',
+              height: '380px',
+              borderRadius: '20px',
+              background: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(20px)',
+              border: '1px solid var(--glass-border)',
+              boxShadow: '0 12px 40px rgba(26, 16, 8, 0.15)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              animation: 'slideUp 0.3s ease'
+            }}
+          >
+            {/* Popover Header */}
+            <div
+              className="copilot-header"
+              style={{
+                padding: '0.85rem 1.2rem',
+                background: 'rgba(249, 115, 22, 0.08)',
+                borderBottom: '1px solid var(--glass-border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
               }}
-              placeholder="Ask me to change fields or ask a doubt..."
-              disabled={loadingCopilot}
-              className="copilot-input"
-            />
-            <button
-              className="copilot-send-btn"
-              disabled={!copilotInput.trim() || loadingCopilot}
-              onClick={handleSendCopilot}
             >
-              <Send size={14} />
-            </button>
+              <span className="copilot-header-title" style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                <Bot size={18} style={{ color: 'var(--orange-500)' }} /> Campaign Copilot
+              </span>
+              <button
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                onClick={() => setCopilotOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Popover Messages */}
+            <div
+              className="copilot-messages"
+              style={{
+                flexGrow: 1,
+                padding: '1rem',
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.75rem'
+              }}
+            >
+              {copilotMessages.map(msg => (
+                <div
+                  key={msg.id}
+                  className={`copilot-msg copilot-msg-${msg.role}`}
+                  style={{
+                    maxWidth: '85%',
+                    padding: '0.7rem 0.9rem',
+                    borderRadius: '14px',
+                    fontSize: '0.9rem',
+                    lineHeight: '1.45',
+                    alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                    background: msg.role === 'user' ? 'var(--orange-500)' : 'rgba(255, 255, 255, 0.5)',
+                    color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
+                    border: msg.role === 'user' ? 'none' : '1px solid var(--glass-border-subtle)',
+                    borderBottomRightRadius: msg.role === 'user' ? '2px' : '14px',
+                    borderBottomLeftRadius: msg.role === 'user' ? '14px' : '2px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.02)'
+                  }}
+                >
+                  {msg.content}
+                </div>
+              ))}
+              {loadingCopilot && (
+                <div
+                  className="copilot-msg copilot-msg-assistant"
+                  style={{
+                    alignSelf: 'flex-start',
+                    background: 'rgba(255, 255, 255, 0.4)',
+                    color: 'var(--text-muted)',
+                    padding: '0.7rem 0.9rem',
+                    borderRadius: '14px',
+                    borderBottomLeftRadius: '2px',
+                    border: '1px solid var(--glass-border-subtle)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <div className="thinking-dots"><span /><span /><span /></div> Thinking...
+                </div>
+              )}
+              <div ref={copilotEndRef} />
+            </div>
           </div>
+        )}
+
+        {/* Floating Chat Input Bar */}
+        <div
+          className="floating-copilot-bar"
+          onClick={() => !copilotOpen && setCopilotOpen(true)}
+          style={{
+            pointerEvents: 'auto',
+            background: 'rgba(255, 255, 255, 0.8)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid var(--glass-border)',
+            borderRadius: '99px',
+            padding: '6px 8px 6px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 8px 30px rgba(26, 16, 8, 0.1)',
+            cursor: copilotOpen ? 'default' : 'pointer'
+          }}
+        >
+          <Bot size={22} style={{ color: 'var(--orange-500)', flexShrink: 0 }} />
+          <input
+            type="text"
+            value={copilotInput}
+            onChange={e => setCopilotInput(e.target.value)}
+            onFocus={() => setCopilotOpen(true)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') handleSendCopilot();
+            }}
+            placeholder="Ask Campaign Copilot to brainstorm, edit filters, or run campaign..."
+            disabled={loadingCopilot}
+            style={{
+              flexGrow: 1,
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-primary)',
+              padding: '8px 0',
+              fontSize: '0.95rem',
+              outline: 'none'
+            }}
+          />
+          <button
+            className="copilot-send-btn"
+            disabled={!copilotInput.trim() || loadingCopilot}
+            onClick={handleSendCopilot}
+            style={{
+              background: 'var(--orange-500)',
+              color: '#fff',
+              border: 'none',
+              width: '38px',
+              height: '38px',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              flexShrink: 0
+            }}
+          >
+            <Send size={16} />
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }

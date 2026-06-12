@@ -92,6 +92,29 @@ class RecommendationAudienceResponse(BaseModel):
     filters: dict
     count: int
     reason: str
+    avg_spent: float
+    avg_orders: float
+
+
+class MetadataRequest(BaseModel):
+    cities: list[str] = Field(default_factory=list)
+
+
+class MetadataCity(BaseModel):
+    city: str
+    count: int
+
+
+class MetadataTag(BaseModel):
+    tag: str
+    count: int
+
+
+class MetadataResponse(BaseModel):
+    cities: list[MetadataCity]
+    tags: list[MetadataTag]
+    max_spent: float
+    max_orders: int
 
 
 class StrategyRequest(BaseModel):
@@ -207,12 +230,14 @@ async def _run_copilot(
 
         reply = parsed.get("reply") or "I'm here to help."
         field_updates = parsed.get("field_updates") or {}
+        trigger_launch = bool(parsed.get("trigger_launch", False))
 
         await push_event(conversation_id, "result", {
             "step": "complete",
             "state": {
                 "ai_response": reply,
                 "field_updates": field_updates,
+                "trigger_launch": trigger_launch,
                 "suggestions": []
             }
         })
@@ -537,19 +562,26 @@ async def recommend_audience():
                     idx += 1
                     
                 where_clause = " AND ".join(conditions) if conditions else "TRUE"
-                query = f"SELECT COUNT(*) FROM customers WHERE {where_clause}"
+                query = f"SELECT COUNT(*) as count, COALESCE(AVG(total_spent), 0) as avg_spent, COALESCE(AVG(total_orders), 0) as avg_orders FROM customers WHERE {where_clause}"
                 
                 async with pool.acquire() as conn:
-                    real_count = await conn.fetchval(query, *params)
+                    row = await conn.fetchrow(query, *params)
+                    real_count = row["count"]
+                    avg_spent = float(row["avg_spent"])
+                    avg_orders = float(row["avg_orders"])
             except Exception as query_err:
                 logger.warning(f"Failed to query count for filter {filters}: {query_err}")
                 real_count = rec.get("count") or 0
+                avg_spent = 0.0
+                avg_orders = 0.0
                 
             final_recs.append({
                 "name": rec.get("name", "Target Segment"),
                 "filters": filters,
                 "count": real_count,
-                "reason": rec.get("reason", "")
+                "reason": rec.get("reason", ""),
+                "avg_spent": avg_spent,
+                "avg_orders": avg_orders
             })
             
         return final_recs
@@ -664,11 +696,23 @@ async def get_segment_count(request: CountRequest):
             conditions.append(f"total_spent >= ${idx}")
             params.append(float(min_spent))
             idx += 1
+
+        max_spent = filters.get("max_spent")
+        if max_spent is not None and max_spent != "":
+            conditions.append(f"total_spent <= ${idx}")
+            params.append(float(max_spent))
+            idx += 1
             
         min_orders = filters.get("min_orders")
         if min_orders is not None and min_orders != "":
             conditions.append(f"total_orders >= ${idx}")
             params.append(int(min_orders))
+            idx += 1
+
+        max_orders = filters.get("max_orders")
+        if max_orders is not None and max_orders != "":
+            conditions.append(f"total_orders <= ${idx}")
+            params.append(int(max_orders))
             idx += 1
             
         where_clause = " AND ".join(conditions) if conditions else "TRUE"
@@ -679,4 +723,47 @@ async def get_segment_count(request: CountRequest):
         return CountResponse(count=count)
     except Exception as e:
         logger.error(f"Failed to get segment count: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/metadata",
+    response_model=MetadataResponse,
+    summary="Get dynamic campaign metadata filters (distinct cities, tag counts, spend limits) from the database"
+)
+async def get_metadata(request: MetadataRequest):
+    pool = get_main_pool()
+    try:
+        async with pool.acquire() as conn:
+            city_rows = await conn.fetch(
+                "SELECT city, COUNT(*) as count FROM customers WHERE city IS NOT NULL AND city != '' GROUP BY city ORDER BY count DESC"
+            )
+            
+            limits = await conn.fetchrow(
+                "SELECT COALESCE(MAX(total_spent), 0) as max_spent, COALESCE(MAX(total_orders), 0) as max_orders FROM customers"
+            )
+            max_spent = float(limits["max_spent"])
+            max_orders = int(limits["max_orders"])
+            
+            if request.cities:
+                tag_rows = await conn.fetch(
+                    "SELECT unnest(tags) as tag, COUNT(*) as count FROM customers WHERE city = ANY($1::text[]) GROUP BY tag ORDER BY count DESC",
+                    request.cities
+                )
+            else:
+                tag_rows = await conn.fetch(
+                    "SELECT unnest(tags) as tag, COUNT(*) as count FROM customers GROUP BY tag ORDER BY count DESC"
+                )
+                
+        cities = [{"city": r["city"], "count": r["count"]} for r in city_rows]
+        tags = [{"tag": r["tag"], "count": r["count"]} for r in tag_rows]
+        
+        return MetadataResponse(
+            cities=cities,
+            tags=tags,
+            max_spent=max_spent,
+            max_orders=max_orders
+        )
+    except Exception as e:
+        logger.error(f"Failed to query metadata: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

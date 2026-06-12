@@ -384,8 +384,9 @@ The user can chat with you to ask questions about campaigns or ask to update fie
      - "min_orders": Integer or null
      - "goal": String
      - "channel": String ("whatsapp", "sms", "email", "rcs")
-3. Return a helpful conversational response in "reply". Explain what you did or answer their question.
-4. Return ONLY a valid JSON object. No markdown, no explanation.
+3. If the user explicitly wants to run, launch, execute, or send a campaign immediately (e.g., "run a campaign for lapsed customers in Bangalore offering 20% off using SMS", "execute now", "launch this"), set "trigger_launch" to true. Otherwise, set it to false.
+4. Return a helpful conversational response in "reply". Explain what you did or answer their question.
+5. Return ONLY a valid JSON object. No markdown, no explanation.
 
 Example:
 {{
@@ -394,6 +395,7 @@ Example:
     "cities": ["Mumbai"],
     "channel": "sms"
   }},
+  "trigger_launch": false,
   "reply": "Got it! I have updated the city to Mumbai and set the channel to SMS on the form."
 }}
 """
