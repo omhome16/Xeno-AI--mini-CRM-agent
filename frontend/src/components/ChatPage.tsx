@@ -284,7 +284,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     setMinSpent(val);
-    if (maxSpent && Number(val) > Number(maxSpent)) {
+    const numericMax = maxSpent !== '' ? Number(maxSpent) : maxSpentLimit;
+    if (Number(val) > numericMax) {
       setMaxSpent(val);
     }
   };
@@ -295,7 +296,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     setMaxSpent(val);
-    if (minSpent && Number(val) < Number(minSpent)) {
+    const numericMin = minSpent !== '' ? Number(minSpent) : 0;
+    if (Number(val) < numericMin) {
       setMinSpent(val);
     }
   };
@@ -306,7 +308,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     setMinOrders(val);
-    if (maxOrders && Number(val) > Number(maxOrders)) {
+    const numericMax = maxOrders !== '' ? Number(maxOrders) : maxOrdersLimit;
+    if (Number(val) > numericMax) {
       setMaxOrders(val);
     }
   };
@@ -317,7 +320,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     setMaxOrders(val);
-    if (minOrders && Number(val) < Number(minOrders)) {
+    const numericMin = minOrders !== '' ? Number(minOrders) : 0;
+    if (Number(val) < numericMin) {
       setMinOrders(val);
     }
   };
@@ -692,7 +696,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             top: 'calc(100% + 8px)',
             right: '0',
             width: '420px',
-            height: '380px',
+            maxHeight: '380px',
             borderRadius: '16px',
             background: 'rgba(255, 255, 255, 0.85)',
             backdropFilter: 'blur(20px)',
