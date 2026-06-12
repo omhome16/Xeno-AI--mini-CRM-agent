@@ -107,20 +107,20 @@ export default function CustomerPreviewTable({ preview, totalCount }: CustomerPr
         )}
       </div>
 
-      <div style={{ overflowX: 'auto', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
-        <table className="preview-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12.5px' }}>
+      <div className="glass-subtle" style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)' }}>
+        <table className="preview-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px' }}>
           <thead>
-            <tr style={{ background: 'rgba(255, 255, 255, 0.08)' }}>
+            <tr style={{ background: 'rgba(255, 255, 255, 0.15)' }}>
               {displayKeys.map(k => (
                 <th key={k} style={{ 
                   textAlign: 'left', 
-                  padding: '10px 14px', 
+                  padding: '12px 16px', 
                   color: 'var(--text-muted)', 
                   fontWeight: 700,
-                  fontSize: '10px',
+                  fontSize: '11px',
                   textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.15)'
+                  letterSpacing: '0.06em',
+                  borderBottom: '1px solid var(--glass-border)'
                 }}>
                   {formatHeader(k)}
                 </th>
@@ -132,10 +132,10 @@ export default function CustomerPreviewTable({ preview, totalCount }: CustomerPr
               <tr key={rowIndex}>
                 {displayKeys.map(k => (
                   <td key={k} style={{ 
-                    padding: '10px 14px', 
-                    borderTop: rowIndex > 0 ? '1px solid rgba(255, 255, 255, 0.08)' : 'none',
+                    padding: '12px 16px', 
+                    borderTop: rowIndex > 0 ? '1px solid var(--glass-border-subtle)' : 'none',
                     color: 'var(--text-on-glass)',
-                    lineHeight: '1.4'
+                    lineHeight: '1.5'
                   }}>
                     {formatValue(k, row[k])}
                   </td>

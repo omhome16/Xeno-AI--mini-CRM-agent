@@ -370,27 +370,27 @@ export default function BrandProfilePage() {
               No products added to catalog yet. Add products to let the AI strategist suggest product-focused campaigns!
             </div>
           ) : (
-            <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <div className="glass-subtle" style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'var(--glass-bg-strong)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)' }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '13px' }}>
                 <thead>
-                  <tr style={{ background: 'rgba(255,255,255,0.1)', textAlign: 'left' }}>
-                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>Product Name</th>
-                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>Category</th>
-                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>Price</th>
-                    <th style={{ padding: '12px 16px', width: '60px' }} />
+                  <tr style={{ background: 'rgba(255, 255, 255, 0.15)', textAlign: 'left' }}>
+                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid var(--glass-border)' }}>Product Name</th>
+                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid var(--glass-border)' }}>Category</th>
+                    <th style={{ padding: '12px 16px', color: 'var(--text-muted)', fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid var(--glass-border)' }}>Price</th>
+                    <th style={{ padding: '12px 16px', width: '60px', borderBottom: '1px solid var(--glass-border)' }} />
                   </tr>
                 </thead>
                 <tbody>
                   {profile.product_catalog.map((product, idx) => (
-                    <tr key={idx} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                      <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-primary)' }}>{product.name}</td>
-                      <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>
-                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.15)', padding: '2px 8px', borderRadius: '4px' }}>
+                    <tr key={idx}>
+                      <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text-primary)', borderTop: idx > 0 ? '1px solid var(--glass-border-subtle)' : 'none' }}>{product.name}</td>
+                      <td style={{ padding: '12px 16px', color: 'var(--text-secondary)', borderTop: idx > 0 ? '1px solid var(--glass-border-subtle)' : 'none' }}>
+                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.15)', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--glass-border-subtle)' }}>
                           {product.category || 'General'}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text-primary)' }}>₹{product.price.toLocaleString()}</td>
-                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text-primary)', borderTop: idx > 0 ? '1px solid var(--glass-border-subtle)' : 'none' }}>₹{product.price.toLocaleString()}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', borderTop: idx > 0 ? '1px solid var(--glass-border-subtle)' : 'none' }}>
                         <button onClick={() => removeProduct(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
                           <Trash2 size={16} />
                         </button>
