@@ -599,7 +599,12 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     setExecError(undefined);
   };
 
-  const portalNode = isActive ? document.getElementById('header-copilot-portal') : null;
+  const [portalNode, setPortalNode] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = document.getElementById('header-copilot-portal');
+    setPortalNode(el);
+  }, [isActive]);
   const copilotPortalContent = portalNode ? createPortal(
     <div
       className="header-copilot-container"
@@ -787,7 +792,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   ) : null;
 
   return (
-    <div className="campaign-studio" style={{ paddingBottom: '2rem' }}>
+    <div className="campaign-studio" style={{ paddingBottom: '2rem', height: 'auto', overflow: 'visible' }}>
       {/* Dynamic CSS Inject */}
       <style>{`
         .wizard-graph-flow {
