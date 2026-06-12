@@ -25,6 +25,22 @@ interface CopilotMessage {
   content: string;
 }
 
+const formatTagName = (tag: string) => {
+  return tag
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(w => {
+      const lower = w.toLowerCase();
+      if (lower === 'sms') return 'SMS';
+      if (lower === 'whatsapp') return 'WhatsApp';
+      if (lower === 'vip') return 'VIP';
+      if (lower === 'rcs') return 'RCS';
+      if (lower === 'email') return 'Email';
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    })
+    .join(' ');
+};
+
 export default function ChatPage() {
   // ── Step State ──
   const [currentStep, setCurrentStep] = useState<Step>(1);
@@ -210,7 +226,7 @@ export default function ChatPage() {
   const getAudienceDescription = () => {
     let parts: string[] = [];
     if (selectedTags.length > 0) {
-      parts.push(selectedTags.join(', ').toUpperCase());
+      parts.push(selectedTags.map(t => formatTagName(t)).join(', '));
     } else {
       parts.push('Customers');
     }
@@ -384,7 +400,7 @@ export default function ChatPage() {
     const getDesc = () => {
       let parts: string[] = [];
       if (tags.length > 0) {
-        parts.push(tags.join(', ').toUpperCase());
+        parts.push(tags.map(t => formatTagName(t)).join(', '));
       } else {
         parts.push('Customers');
       }
@@ -683,6 +699,21 @@ export default function ChatPage() {
           flex-direction: column;
           gap: 1.2rem;
           box-shadow: inset 0 0 20px rgba(249, 115, 22, 0.03);
+          max-height: 540px;
+          overflow-y: auto;
+        }
+        .wizard-right-panel::-webkit-scrollbar {
+          width: 6px;
+        }
+        .wizard-right-panel::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .wizard-right-panel::-webkit-scrollbar-thumb {
+          background: rgba(249, 115, 22, 0.2);
+          border-radius: 4px;
+        }
+        .wizard-right-panel::-webkit-scrollbar-thumb:hover {
+          background: rgba(249, 115, 22, 0.4);
         }
         .panel-title {
           font-size: 1.1rem;
@@ -1112,7 +1143,7 @@ export default function ChatPage() {
                           onClick={() => toggleTag(tag)}
                           className={`tag-checkbox-btn ${selectedTags.includes(tag) ? 'selected' : ''}`}
                         >
-                          {tag.toUpperCase()} ({count})
+                          {formatTagName(tag)} ({count})
                         </button>
                       ))}
                     </div>
