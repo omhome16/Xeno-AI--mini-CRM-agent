@@ -931,7 +931,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           align-items: center;
           border-bottom: 1px solid var(--glass-border-subtle);
           padding-bottom: 0.75rem;
-          margin-bottom: 1.2rem;
+          margin-bottom: 0;
         }
         .panel-header .panel-title {
           border-bottom: none;
