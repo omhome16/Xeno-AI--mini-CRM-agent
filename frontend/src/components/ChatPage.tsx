@@ -925,6 +925,27 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         .wizard-right-panel::-webkit-scrollbar-thumb:hover {
           background: rgba(249, 115, 22, 0.4);
         }
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid var(--glass-border-subtle);
+          padding-bottom: 0.75rem;
+          margin-bottom: 1.2rem;
+        }
+        .panel-header .panel-title {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+        .panel-header .matching-badge-container {
+          margin: 0;
+          padding: 0.35rem 0.75rem;
+          border-radius: 8px;
+        }
+        .panel-header .matching-text {
+          font-size: 0.8rem;
+          font-weight: 500;
+        }
         .panel-title {
           font-size: 1.1rem;
           font-weight: 600;
@@ -1068,7 +1089,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           border: 1px solid rgba(16, 185, 129, 0.2);
           border-radius: 10px;
           padding: 0.75rem 1rem;
-          margin-top: auto;
+          margin-bottom: 1rem;
         }
         .matching-pulse-dot {
           width: 10px;
@@ -1342,7 +1363,16 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             {currentStep === 1 && (
               <>
                 <div className="wizard-left-panel">
-                  <h3 className="panel-title"><Sparkles size={16} /> Define Segment Filters</h3>
+                  <div className="panel-header">
+                    <h3 className="panel-title"><Sparkles size={16} /> Define Segment Filters</h3>
+                    {/* Dynamic customers count badge */}
+                    <div className="matching-badge-container">
+                      <div className="matching-pulse-dot" />
+                      <span className="matching-text">
+                        {loadingCount ? 'Recalculating...' : `Found ${audienceCount.toLocaleString()} matching customers`}
+                      </span>
+                    </div>
+                  </div>
                   
                   {/* Cities Select */}
                   <div className="wizard-form-group">
@@ -1458,13 +1488,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                     </div>
                   </div>
 
-                  {/* Dynamic customers count badge */}
-                  <div className="matching-badge-container">
-                    <div className="matching-pulse-dot" />
-                    <span className="matching-text">
-                      {loadingCount ? 'Recalculating...' : `Found ${audienceCount.toLocaleString()} matching customers in segment`}
-                    </span>
-                  </div>
+
                 </div>
 
                 <div className="wizard-right-panel">

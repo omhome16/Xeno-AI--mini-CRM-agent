@@ -194,3 +194,43 @@ async def update_customer_aggregates(
             """,
             customer_id,
         )
+
+        # Dynamic tag synchronization for this customer
+        # 1. Add 'lapsed' tag if last order is older than 60 days
+        await conn.execute(
+            """
+            UPDATE customers
+            SET tags = ARRAY(
+              SELECT DISTINCT unnest(array_append(tags, 'lapsed'))
+            )
+            WHERE id = $1
+              AND last_order_at IS NOT NULL 
+              AND last_order_at < NOW() - INTERVAL '60 days'
+            """,
+            customer_id,
+        )
+        # 2. Remove 'lapsed' tag if last order is recent (<= 60 days)
+        await conn.execute(
+            """
+            UPDATE customers
+            SET tags = ARRAY(
+              SELECT t FROM unnest(tags) t WHERE t != 'lapsed'
+            )
+            WHERE id = $1
+              AND last_order_at IS NOT NULL 
+              AND last_order_at >= NOW() - INTERVAL '60 days'
+            """,
+            customer_id,
+        )
+        # 3. Add 'vip' and 'high_value' tags if total spent >= 10000 or total orders >= 10
+        await conn.execute(
+            """
+            UPDATE customers
+            SET tags = ARRAY(
+              SELECT DISTINCT unnest(array_cat(tags, ARRAY['vip', 'high_value']))
+            )
+            WHERE id = $1
+              AND (total_spent >= 10000 OR total_orders >= 10)
+            """,
+            customer_id,
+        )

@@ -80,6 +80,42 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("✓ Automatic database seeding is disabled (SEED_DEMO_DATA=False)")
 
+        # 4.5. Synchronize customer tags (lapsed, vip, high_value) with order history
+        async with pool.acquire() as conn:
+            # Add 'lapsed' to tags for customers who haven't ordered in 60 days
+            await conn.execute(
+                """
+                UPDATE customers
+                SET tags = ARRAY(
+                  SELECT DISTINCT unnest(array_append(tags, 'lapsed'))
+                )
+                WHERE last_order_at IS NOT NULL 
+                  AND last_order_at < NOW() - INTERVAL '60 days'
+                """
+            )
+            # Remove 'lapsed' from tags for customers who have ordered within 60 days
+            await conn.execute(
+                """
+                UPDATE customers
+                SET tags = ARRAY(
+                  SELECT t FROM unnest(tags) t WHERE t != 'lapsed'
+                )
+                WHERE last_order_at IS NOT NULL 
+                  AND last_order_at >= NOW() - INTERVAL '60 days'
+                """
+            )
+            # Add 'vip' and 'high_value' to tags for customers who spent >= 10000 or have >= 10 orders
+            await conn.execute(
+                """
+                UPDATE customers
+                SET tags = ARRAY(
+                  SELECT DISTINCT unnest(array_cat(tags, ARRAY['vip', 'high_value']))
+                )
+                WHERE total_spent >= 10000 OR total_orders >= 10
+                """
+            )
+        logger.info("✓ Synchronized customer tags (lapsed, vip, high_value) with order history")
+
         # 5. Start background workers
         import asyncio
         from app.workers.dispatch_worker import start_dispatch_worker
