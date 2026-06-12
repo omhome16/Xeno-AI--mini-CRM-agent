@@ -92,7 +92,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Hi! I am your AI Copilot. You can ask me questions about this campaign, or ask me to change filters (e.g., "change city to Delhi" or "set tags to VIP").'
+      content: 'Hi! I am your AI Copilot. I can answer your query, advise you, or create and run your campaign start to end for you.'
     }
   ]);
   const [copilotInput, setCopilotInput] = useState('');
