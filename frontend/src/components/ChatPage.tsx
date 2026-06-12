@@ -1000,6 +1000,61 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           flex-direction: column;
           gap: 0.5rem;
         }
+        .slider-container input[type="range"] {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.4) !important;
+          border-radius: 3px;
+          outline: none;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .slider-container input[type="range"]::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.4) !important;
+          border-radius: 3px;
+          border: none;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 16px;
+          width: 16px;
+          border-radius: 50%;
+          background: var(--orange-500) !important;
+          cursor: pointer;
+          margin-top: -5px;
+          border: 2px solid #fff !important;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+          transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+          transform: scale(1.15);
+          background: var(--orange-600) !important;
+        }
+        .slider-container input[type="range"]::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.4) !important;
+          border-radius: 3px;
+          border: none;
+        }
+        .slider-container input[type="range"]::-moz-range-thumb {
+          height: 16px;
+          width: 16px;
+          border-radius: 50%;
+          background: var(--orange-500) !important;
+          cursor: pointer;
+          border: 2px solid #fff !important;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+          transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+        .slider-container input[type="range"]::-moz-range-thumb:hover {
+          transform: scale(1.15);
+          background: var(--orange-600) !important;
+        }
         .slider-val-box {
           display: flex;
           justify-content: space-between;
