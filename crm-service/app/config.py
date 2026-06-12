@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # ── LLM API Keys ──
-    GROQ_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
 
     # ── LangSmith Tracing ──
     LANGSMITH_TRACING: str = ""

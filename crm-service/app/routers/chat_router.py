@@ -2,16 +2,10 @@
 Chat API Router — The main AI agent interface (Campaign Studio).
 
 Endpoints:
-  POST /api/chat            — Brainstorm / query / general chat (no interrupts)
+  POST /api/chat            — Floating copilot chat (updates parameters)
   POST /api/chat/plan       — Generate a campaign plan from a brief
   POST /api/chat/execute    — Execute an approved campaign end-to-end
-  POST /api/chat/resume     — Resume an interrupted conversation (legacy, kept for safety)
   GET  /api/chat/stream/:id — SSE stream for real-time updates
-
-Campaign Studio Flow:
-  1. BRAINSTORM: User chats with AI → POST /api/chat (returns AI response + suggestions)
-  2. PLAN: User clicks "Plan This Campaign" → POST /api/chat/plan (returns audience + message)
-  3. EXECUTE: User clicks "Launch" → POST /api/chat/execute (runs campaign end-to-end)
 """
 
 import json
@@ -29,15 +23,18 @@ from app.agent.llm import DualLLMClient
 from app.agent.graph import build_campaign_graph
 from app.agent.state import CampaignState
 from app.sse.manager import push_event, event_stream
-from app.agent.prompts import IMPROVE_MESSAGE_PROMPT
+from app.agent.prompts import (
+    IMPROVE_MESSAGE_PROMPT,
+    AUDIENCE_RECOMMENDATION_PROMPT,
+    STRATEGY_RECOMMENDATION_PROMPT,
+    MESSAGE_RECOMMENDATION_PROMPT,
+    COPILOT_INTENT_PROMPT,
+)
+from app.database import get_main_pool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
-
-# ── In-memory state store (Redis in production) ──
-_conversation_states: dict[str, dict] = {}
-_conversation_configs: dict[str, dict] = {}
 
 
 # ── Request/Response Models ──
@@ -45,7 +42,7 @@ _conversation_configs: dict[str, dict] = {}
 class ChatRequest(BaseModel):
     """Request to start a new chat or send a message."""
     message: str = Field(..., min_length=1, max_length=2000)
-    mode: str = Field(default="brainstorm")
+    mode: str = Field(default="copilot")
     conversation_id: Optional[str] = None
     history: list[dict] = Field(default_factory=list, description="Previous conversation messages for context")
     brief: dict = Field(default_factory=dict, description="Current campaign brief state")
@@ -69,14 +66,6 @@ class ExecuteRequest(BaseModel):
     conversation_id: Optional[str] = None
 
 
-class ResumeRequest(BaseModel):
-    """Request to resume an interrupted conversation (legacy)."""
-    conversation_id: str
-    response: dict = Field(
-        ..., description="User's response to the interrupt (action + data)"
-    )
-
-
 class ChatResponse(BaseModel):
     """Initial response with conversation ID for SSE connection."""
     conversation_id: str
@@ -98,13 +87,49 @@ class ImproveMessageResponse(BaseModel):
     improved_message: str
 
 
+class RecommendationAudienceResponse(BaseModel):
+    name: str
+    filters: dict
+    count: int
+    reason: str
+
+
+class StrategyRequest(BaseModel):
+    filters: dict
+
+
+class StrategyResponse(BaseModel):
+    goal: str
+    channel: str
+    reason: str
+
+
+class MessageRecRequest(BaseModel):
+    audience_desc: str
+    goal: str
+    channel: str
+
+
+class MessageRecResponse(BaseModel):
+    type: str
+    content: str
+    reason: str
+
+
+class CountRequest(BaseModel):
+    filters: dict
+
+
+class CountResponse(BaseModel):
+    count: int
+
+
 # ── Background task: Run the graph ──
 
 async def _run_graph(
     conversation_id: str,
     state: CampaignState,
     llm_client: DualLLMClient,
-    resume_value: Any = None,
 ) -> None:
     """
     Run the LangGraph workflow as a background task.
@@ -117,32 +142,16 @@ async def _run_graph(
         logger.info(f"[_run_graph] Starting graph execution for conversation_id={conversation_id}")
         await push_event(conversation_id, "step_start", {
             "step": "Starting",
-            "message": f"Processing: {state.get('user_message', '')[:100]}",
+            "message": f"Processing campaign plan...",
         })
 
         config = {"configurable": {"thread_id": conversation_id}}
 
-        if resume_value is not None:
-            from langgraph.types import Command
-            logger.info(f"[_run_graph] Resuming graph execution with input: {resume_value}")
-            async for event in graph.astream(
-                Command(resume=resume_value),
-                config=config,
-            ):
-                await _process_graph_event(conversation_id, event)
-        else:
-            async for event in graph.astream(state, config=config):
-                await _process_graph_event(conversation_id, event)
-
-        # Check if we ended with an interrupt
-        snapshot = graph.get_state(config)
-        if snapshot.next:
-            _conversation_states[conversation_id] = dict(snapshot.values)
-            _conversation_configs[conversation_id] = config
-            logger.info(f"[_run_graph] Graph execution paused/interrupted at: {snapshot.next}")
-            return
+        async for event in graph.astream(state, config=config):
+            await _process_graph_event(conversation_id, event)
 
         # Graph completed — send result
+        snapshot = graph.get_state(config)
         final_state = snapshot.values if snapshot else {}
         logger.info(f"[_run_graph] Graph execution completed successfully for conversation_id={conversation_id}")
         await push_event(conversation_id, "result", {
@@ -157,30 +166,72 @@ async def _run_graph(
         })
 
 
+async def _run_copilot(
+    conversation_id: str,
+    message: str,
+    history: list[dict],
+    brief: dict,
+    llm_client: DualLLMClient,
+) -> None:
+    """
+    Run the AI copilot to generate responses and parse form updates.
+    """
+    try:
+        logger.info(f"[_run_copilot] Starting copilot logic for conversation_id={conversation_id}")
+        await push_event(conversation_id, "step_start", {
+            "step": "Copilot",
+            "message": "AI Copilot is thinking...",
+        })
+
+        # Build history context
+        history_parts = []
+        for msg in history[-6:]:
+            role = msg.get("role") or "user"
+            content = msg.get("content", "").strip()
+            if content:
+                history_parts.append(f"{role}: {content}")
+        history_ctx = "\n".join(history_parts)
+
+        user_input = ""
+        if history_ctx:
+            user_input += f"Conversation history:\n{history_ctx}\n\n"
+        user_input += f"User message: {message}"
+
+        system_prompt = COPILOT_INTENT_PROMPT.format(
+            current_fields=json.dumps(brief, indent=2)
+        )
+
+        raw = await llm_client.reason(system_prompt=system_prompt, user_input=user_input)
+        from app.agent.nodes import _parse_json_response
+        parsed = _parse_json_response(raw)
+
+        reply = parsed.get("reply") or "I'm here to help."
+        field_updates = parsed.get("field_updates") or {}
+
+        await push_event(conversation_id, "result", {
+            "step": "complete",
+            "state": {
+                "ai_response": reply,
+                "field_updates": field_updates,
+                "suggestions": []
+            }
+        })
+    except Exception as e:
+        logger.error(f"[_run_copilot] Copilot execution error: {e}", exc_info=True)
+        await push_event(conversation_id, "error", {
+            "message": f"Copilot error: {str(e)[:300]}",
+        })
+
+
 async def _process_graph_event(conversation_id: str, event: dict) -> None:
     """Process a single graph stream event and push to SSE."""
     for node_name, node_output in event.items():
-        if node_name == "__interrupt__":
-            if isinstance(node_output, (list, tuple)) and node_output:
-                item = node_output[0]
-                interrupt_data = item.value if hasattr(item, 'value') else item
-            else:
-                interrupt_data = node_output
-
-            if not isinstance(interrupt_data, dict):
-                interrupt_data = {"raw": str(interrupt_data)}
-            else:
-                interrupt_data = _serialize_state(interrupt_data)
-
-            await push_event(conversation_id, "interrupt", interrupt_data)
-            logger.info(f"[_process_graph_event] Interrupt triggered: {type(interrupt_data)}")
-        else:
-            # Normal node completion
-            logger.info(f"[_process_graph_event] Node '{node_name}' completed. Output keys: {list(node_output.keys()) if isinstance(node_output, dict) else type(node_output)}")
-            await push_event(conversation_id, "step_complete", {
-                "step": node_name,
-                "data": _serialize_state(node_output) if isinstance(node_output, dict) else str(node_output),
-            })
+        # Normal node completion
+        logger.info(f"[_process_graph_event] Node '{node_name}' completed.")
+        await push_event(conversation_id, "step_complete", {
+            "step": node_name,
+            "data": _serialize_state(node_output) if isinstance(node_output, dict) else str(node_output),
+        })
 
 
 def _serialize_state(state: dict) -> dict:
@@ -212,42 +263,28 @@ def _serialize_state(state: dict) -> dict:
     "",
     response_model=ChatResponse,
     status_code=202,
-    summary="Brainstorm, query, or chat with the AI agent",
+    summary="Chat with the AI Copilot to update fields or ask questions",
 )
 async def start_chat(request: ChatRequest):
     """
-    Send a message to the AI agent.
-
-    In Campaign Studio, this handles:
-    - Brainstorm: AI responds with suggestions and brief updates
-    - Query: AI runs SQL and returns customer data
-    - General chat: AI answers questions about the CRM
+    Send a message to the AI Copilot.
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
 
-    state: CampaignState = {
-        "user_message": request.message,
-        "mode": request.mode,
-        "conversation_id": conversation_id,
-        "messages": request.history[-10:],
-        "brief": request.brief,
-        "current_step": "starting",
-    }
-
     llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
+        gemini_key=settings.GEMINI_API_KEY,
     )
 
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="Groq LLM provider is not configured. Set GROQ_API_KEY.",
+            detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.",
         )
 
     asyncio.create_task(
-        _run_graph(conversation_id, state, llm_client),
-        name=f"chat-{conversation_id[:8]}",
+        _run_copilot(conversation_id, request.message, request.history, request.brief, llm_client),
+        name=f"copilot-{conversation_id[:8]}",
     )
 
     return ChatResponse(
@@ -265,11 +302,6 @@ async def start_chat(request: ChatRequest):
 async def plan_campaign(request: PlanRequest):
     """
     Generate a campaign plan: build audience segment + draft message.
-
-    Takes a campaign brief and returns:
-    - Audience SQL + count + preview
-    - Drafted message
-    - Segment metadata
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
@@ -286,7 +318,7 @@ async def plan_campaign(request: PlanRequest):
         "conversation_id": conversation_id,
         "messages": request.history[-10:],
         "brief": brief,
-        "action": "create_campaign",  # Skip intent parsing — go straight to build
+        "action": "create_campaign",
         "audience_description": audience,
         "message_description": message_idea or offer or f"Campaign message for {audience}",
         "channel": channel,
@@ -295,11 +327,11 @@ async def plan_campaign(request: PlanRequest):
     }
 
     llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
+        gemini_key=settings.GEMINI_API_KEY,
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Groq LLM provider is not configured.")
+        raise HTTPException(status_code=503, detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -321,10 +353,8 @@ async def plan_campaign(request: PlanRequest):
 )
 async def execute_campaign(request: ExecuteRequest):
     """
-    Execute a fully approved campaign.
-
-    Takes the complete campaign spec and runs:
-    build_segment → draft_message → execute_campaign → END
+    Execute a fully approved campaign:
+    compile segment SQL -> draft message -> launch campaign.
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
@@ -344,11 +374,11 @@ async def execute_campaign(request: ExecuteRequest):
     }
 
     llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
+        gemini_key=settings.GEMINI_API_KEY,
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Groq LLM provider is not configured.")
+        raise HTTPException(status_code=503, detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -373,17 +403,21 @@ async def improve_message(request: ImproveMessageRequest):
     """
     settings = get_settings()
     llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
+        gemini_key=settings.GEMINI_API_KEY,
     )
 
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="Groq LLM provider is not configured. Set GROQ_API_KEY.",
+            detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.",
         )
 
-    # Prepare prompt safely replacing variables without .format() KeyError risks
-    prompt = IMPROVE_MESSAGE_PROMPT.replace("{message_template}", request.message_template).replace("{instruction}", request.instruction)
+    prompt = (
+        IMPROVE_MESSAGE_PROMPT
+        .replace("{message_template}", request.message_template)
+        .replace("{instruction}", request.instruction)
+        .replace("{channel}", request.channel)
+    )
 
     context = (
         f"Channel: {request.channel}\n"
@@ -404,49 +438,6 @@ async def improve_message(request: ImproveMessageRequest):
         raise HTTPException(status_code=500, detail=f"Failed to improve message: {str(e)}")
 
 
-@router.post(
-    "/resume",
-    response_model=ChatResponse,
-    status_code=202,
-    summary="Resume an interrupted conversation",
-)
-async def resume_chat(request: ResumeRequest):
-    """
-    Resume a conversation from a human-in-the-loop interrupt (legacy).
-    Returns a soft 200 if conversation not found (fixes double-resume bug).
-    """
-    settings = get_settings()
-    conversation_id = request.conversation_id
-
-    saved_state = _conversation_states.get(conversation_id)
-    if not saved_state:
-        # Soft response instead of 404 — fixes double-resume bug
-        return ChatResponse(
-            conversation_id=conversation_id,
-            status="already_completed",
-            message="This conversation has already completed or no pending interrupt.",
-        )
-
-    llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
-    )
-
-    # Clean up before resuming to prevent double-resume
-    _conversation_states.pop(conversation_id, None)
-    _conversation_configs.pop(conversation_id, None)
-
-    asyncio.create_task(
-        _run_graph(conversation_id, saved_state, llm_client, resume_value=request.response),
-        name=f"chat-resume-{conversation_id[:8]}",
-    )
-
-    return ChatResponse(
-        conversation_id=conversation_id,
-        status="resuming",
-        message="Resuming workflow with your response.",
-    )
-
-
 @router.get(
     "/stream/{conversation_id}",
     summary="SSE stream for real-time updates",
@@ -454,14 +445,6 @@ async def resume_chat(request: ResumeRequest):
 async def chat_stream(conversation_id: str):
     """
     Server-Sent Events stream for a conversation.
-
-    Event types:
-      - step_start: Agent started a new step
-      - step_complete: Agent finished a step (includes data)
-      - interrupt: Agent paused for human review
-      - result: Final result
-      - error: Something went wrong
-      - heartbeat: Keep-alive (every 15s)
     """
     return StreamingResponse(
         event_stream(conversation_id),
@@ -472,3 +455,228 @@ async def chat_stream(conversation_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post(
+    "/recommendations/audience",
+    response_model=list[RecommendationAudienceResponse],
+    summary="Get recommended audience segments based on database analytics"
+)
+async def recommend_audience():
+    settings = get_settings()
+    llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        
+    pool = get_main_pool()
+    try:
+        async with pool.acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM customers")
+            cities = await conn.fetch("SELECT city, COUNT(*) as count FROM customers WHERE city IS NOT NULL GROUP BY city ORDER BY count DESC LIMIT 5")
+            tags = await conn.fetch("SELECT unnest(tags) as tag, COUNT(*) as count FROM customers GROUP BY tag ORDER BY count DESC LIMIT 10")
+            spend = await conn.fetchrow("SELECT MIN(total_spent) as min, MAX(total_spent) as max, AVG(total_spent) as avg FROM customers")
+            
+        stats_ctx = f"Total Customers: {total}\n"
+        stats_ctx += "Top Cities:\n"
+        for r in cities:
+            stats_ctx += f"  - {r['city']}: {r['count']}\n"
+        stats_ctx += "Tags:\n"
+        for r in tags:
+            stats_ctx += f"  - {r['tag']}: {r['count']}\n"
+        stats_ctx += f"Spend Statistics:\n  - Min: {spend['min']}\n  - Max: {spend['max']}\n  - Avg: {spend['avg']:.2f}\n"
+        
+        system_prompt = AUDIENCE_RECOMMENDATION_PROMPT.replace("{stats}", stats_ctx)
+        
+        raw = await llm_client.reason(
+            system_prompt=system_prompt,
+            user_input="Suggest 2-3 target segments with reasons."
+        )
+        from app.agent.nodes import _parse_json_response
+        recs = _parse_json_response(raw)
+        
+        if not isinstance(recs, list):
+            if isinstance(recs, dict):
+                for k, v in recs.items():
+                    if isinstance(v, list):
+                        recs = v
+                        break
+            if not isinstance(recs, list):
+                raise ValueError("LLM did not return a list")
+                
+        final_recs = []
+        for rec in recs:
+            filters = rec.get("filters", {})
+            real_count = 0
+            try:
+                conditions = []
+                params = []
+                idx = 1
+                
+                cities_list = filters.get("cities")
+                if cities_list:
+                    conditions.append(f"city = ANY(${idx}::text[])")
+                    params.append(list(cities_list))
+                    idx += 1
+                    
+                tags_list = filters.get("tags")
+                if tags_list:
+                    conditions.append(f"tags @> ${idx}::text[]")
+                    params.append(list(tags_list))
+                    idx += 1
+                    
+                min_spent = filters.get("min_spent")
+                if min_spent is not None:
+                    conditions.append(f"total_spent >= ${idx}")
+                    params.append(float(min_spent))
+                    idx += 1
+                    
+                min_orders = filters.get("min_orders")
+                if min_orders is not None:
+                    conditions.append(f"total_orders >= ${idx}")
+                    params.append(int(min_orders))
+                    idx += 1
+                    
+                where_clause = " AND ".join(conditions) if conditions else "TRUE"
+                query = f"SELECT COUNT(*) FROM customers WHERE {where_clause}"
+                
+                async with pool.acquire() as conn:
+                    real_count = await conn.fetchval(query, *params)
+            except Exception as query_err:
+                logger.warning(f"Failed to query count for filter {filters}: {query_err}")
+                real_count = rec.get("count") or 0
+                
+            final_recs.append({
+                "name": rec.get("name", "Target Segment"),
+                "filters": filters,
+                "count": real_count,
+                "reason": rec.get("reason", "")
+            })
+            
+        return final_recs
+        
+    except Exception as e:
+        logger.error(f"Failed to get audience recommendations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to suggest segments: {str(e)}")
+
+
+@router.post(
+    "/recommendations/strategy",
+    response_model=StrategyResponse,
+    summary="Get goal and channel recommendation for specific filters"
+)
+async def recommend_strategy(request: StrategyRequest):
+    settings = get_settings()
+    llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        
+    try:
+        import json
+        system_prompt = STRATEGY_RECOMMENDATION_PROMPT.replace(
+            "{filters}", json.dumps(request.filters, indent=2)
+        )
+        raw = await llm_client.reason(
+            system_prompt=system_prompt,
+            user_input="Recommend Goal and Channel."
+        )
+        from app.agent.nodes import _parse_json_response
+        res = _parse_json_response(raw)
+        return StrategyResponse(
+            goal=res.get("goal", "Re-engage lapsed customers"),
+            channel=res.get("channel", "whatsapp"),
+            reason=res.get("reason", "")
+        )
+    except Exception as e:
+        logger.error(f"Failed to get strategy recommendation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Strategy recommendation failed: {str(e)}")
+
+
+@router.post(
+    "/recommendations/message",
+    response_model=list[MessageRecResponse],
+    summary="Get message template options (Casual, Urgent, Formal) based on context"
+)
+async def recommend_message(request: MessageRecRequest):
+    settings = get_settings()
+    llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        
+    from app.agent.nodes import _fetch_brand_profile_ctx
+    brand_profile = await _fetch_brand_profile_ctx()
+    
+    try:
+        system_prompt = (
+            MESSAGE_RECOMMENDATION_PROMPT
+            .replace("{audience_desc}", request.audience_desc)
+            .replace("{goal}", request.goal)
+            .replace("{channel}", request.channel)
+            .replace("{brand_profile}", brand_profile)
+        )
+        raw = await llm_client.reason(
+            system_prompt=system_prompt,
+            user_input="Generate 3 copy variations with reasons."
+        )
+        from app.agent.nodes import _parse_json_response
+        res = _parse_json_response(raw)
+        if not isinstance(res, list):
+            raise ValueError("LLM did not return a list")
+        return [
+            MessageRecResponse(
+                type=item.get("type", "Casual"),
+                content=item.get("content", ""),
+                reason=item.get("reason", "")
+            )
+            for item in res
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get message recommendations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Message recommendation failed: {str(e)}")
+
+
+@router.post(
+    "/count",
+    response_model=CountResponse,
+    summary="Get exact customer count for segment filters"
+)
+async def get_segment_count(request: CountRequest):
+    pool = get_main_pool()
+    filters = request.filters
+    try:
+        conditions = []
+        params = []
+        idx = 1
+        
+        cities_list = filters.get("cities")
+        if cities_list:
+            conditions.append(f"city = ANY(${idx}::text[])")
+            params.append(list(cities_list))
+            idx += 1
+            
+        tags_list = filters.get("tags")
+        if tags_list:
+            conditions.append(f"tags @> ${idx}::text[]")
+            params.append(list(tags_list))
+            idx += 1
+            
+        min_spent = filters.get("min_spent")
+        if min_spent is not None and min_spent != "":
+            conditions.append(f"total_spent >= ${idx}")
+            params.append(float(min_spent))
+            idx += 1
+            
+        min_orders = filters.get("min_orders")
+        if min_orders is not None and min_orders != "":
+            conditions.append(f"total_orders >= ${idx}")
+            params.append(int(min_orders))
+            idx += 1
+            
+        where_clause = " AND ".join(conditions) if conditions else "TRUE"
+        query = f"SELECT COUNT(*) FROM customers WHERE {where_clause}"
+        
+        async with pool.acquire() as conn:
+            count = await conn.fetchval(query, *params)
+        return CountResponse(count=count)
+    except Exception as e:
+        logger.error(f"Failed to get segment count: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

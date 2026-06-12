@@ -1,67 +1,67 @@
 """
 Agent State — TypedDict defining the state that flows through the LangGraph workflow.
 
-The state is checkpointed in Redis at each node, allowing:
-  - Resume after interrupts (human-in-the-loop)
-  - Crash recovery (state survives server restart)
-  - Conversation history persistence
+Design principles:
+  - Fields are populated progressively as the workflow advances.
+  - Per-turn scratch fields (think_pad, tool_to_call, etc.) are reset at the start
+    of each turn by parse_intent, so stale values never pollute the next turn.
+  - brand_profile_ctx is fetched once per turn in parse_intent and cached here
+    so downstream nodes (agent_loop, call_tool) never hit the DB redundantly.
 """
 
-from typing import TypedDict, Optional, Any
+from typing import Any, Dict, List, Optional, TypedDict
 
 
 class CampaignState(TypedDict, total=False):
     """
-    State for the campaign creation workflow.
-
-    This state flows through the LangGraph graph and is checkpointed
-    at each node transition. Fields are added progressively as the
-    workflow advances through stages.
+    Shared mutable state for the campaign creation workflow.
+    All fields are optional (total=False); nodes return only the keys they change.
     """
 
-    # ── User Input ──
-    user_message: str           # Original user message
-    mode: str                   # "brainstorm", "plan", "execute", or legacy "guided"/"autopilot"
-    conversation_id: str        # For persistence
+    # ── User Input ──────────────────────────────────────────────────────────
+    user_message: str           # Raw user message for this turn
+    mode: str                   # "brainstorm" | "plan" | "execute"
+    conversation_id: str        # Unique conversation ID (used for SSE + checkpointing)
 
-    # ── Intent (parsed from user message) ──
-    action: str                 # brainstorm, create_campaign, query_customers, general_chat
-    audience_description: str   # NL description of target audience
-    message_description: str    # What kind of message to send
-    channel: str                # whatsapp, sms, email, rcs
-    offer_details: str          # Specific offer/discount
+    # ── Intent (populated by parse_intent) ──────────────────────────────────
+    action: str                 # "brainstorm" | "create_campaign" | "query_customers" | "general_chat"
+    audience_description: str   # NL description of the target audience
+    message_description: str    # What the message should communicate
+    channel: str                # "whatsapp" | "sms" | "email" | "rcs"
+    offer_details: str          # Discount or CTA details (e.g. "10% off")
 
-    # ── Brainstorm ──
-    brief: dict                 # Accumulated campaign brief: {goal, audience, channel, message_idea, offer}
-    ai_response: str            # AI's conversational response text
-    suggestions: list           # Structured suggestion chips for the UI
-    ready_to_plan: bool         # Whether the brief is complete enough to plan
-    brief_updates: dict         # Latest updates to the brief from this exchange
+    # ── Brainstorm / Conversation State ─────────────────────────────────────
+    brief: Dict[str, Any]       # Campaign brief: {goal, audience, channel, message_idea, offer}
+    ai_response: str            # Final text response shown to the user
+    suggestions: List[Dict]     # UI suggestion chips: [{label, value, category}]
+    ready_to_plan: bool         # True when brief has goal + audience + channel
+    brief_updates: Dict[str, Any]  # Updates extracted from this turn only
 
-    # ── Segment (built from audience query) ──
-    audience_sql: str           # The SQL used to query the audience
-    audience_count: int         # Number of matching customers
-    audience_preview: list      # Customer preview rows
-    segment_id: str             # UUID of saved segment
-    segment_name: str           # Generated segment name
-    filter_criteria: dict       # JSONB filter for reproducibility
+    # ── Segment (populated by query_customers_db / create_saved_segment) ────
+    audience_sql: str           # SQL used to query the audience
+    audience_count: int         # Total matching customers
+    audience_preview: List[Dict] # Sample rows for the UI preview table
+    segment_id: str             # UUID of the saved segment
+    segment_name: str           # Human-readable segment name
+    filter_criteria: Dict       # JSONB filter criteria for reproducibility
 
-    # ── Message (drafted by LLM) ──
-    message_template: str       # The drafted message with {{name}} placeholders
-    message_char_count: int     # Character count
+    # ── Message (populated by draft_marketing_message) ──────────────────────
+    message_template: str       # Drafted message with {{name}}/{{city}} placeholders
+    message_char_count: int     # Character count of the template
 
-    # ── Campaign (final execution) ──
-    campaign_id: str            # UUID of created campaign
+    # ── Campaign Execution (populated by execute_saved_campaign) ────────────
+    campaign_id: str            # UUID of the created campaign
     campaign_name: str          # Generated campaign name
-    total_audience: int         # Final audience count
-    communications_created: int # Number of comm records created
+    total_audience: int         # Final audience count used for the campaign
+    communications_created: int # Number of communication records created
 
-    # ── Agent Internal ──
-    think_pad: str              # Agent's internal Chain of Thought reasoning
-    tool_to_call: str           # Name of the tool the agent wants to execute
-    tool_args: dict             # Arguments to pass to the tool
-    last_tool_output: str       # Result string returned by the last tool execution
-    tool_calls_count: int       # Number of tool executions in this turn to avoid infinite loops
-    messages: list              # Conversation messages for context
-    current_step: str           # Current workflow step
-    error: Optional[str]       # Error message if something failed
+    # ── Agent Internal (reset by parse_intent each turn) ────────────────────
+    think_pad: str              # LLM chain-of-thought (for debugging / UI display)
+    tool_to_call: Optional[str] # Tool chosen by agent_loop (None = respond instead)
+    tool_args: Optional[Dict]   # Arguments for the chosen tool
+    last_tool_output: str       # Output string from the last tool execution
+    tool_calls_count: int       # Safety counter — prevents infinite tool-call loops
+    messages: List[Dict]        # Full conversation history: [{role, content}]
+    brand_profile_ctx: str      # Brand profile text, fetched once per turn in parse_intent
+    current_step: str           # Workflow stage label (debugging / logging)
+    error: Optional[str]        # Error message if a step failed

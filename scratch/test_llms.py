@@ -12,25 +12,25 @@ load_dotenv()
 from app.agent.llm import DualLLMClient
 
 async def test_llms():
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    print(f"Loaded Keys:\nGroq: {groq_key[:10]}...")
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    print(f"Loaded Keys:\nGemini: {gemini_key[:10]}...")
 
-    client = DualLLMClient(groq_key=groq_key)
+    client = DualLLMClient(gemini_key=gemini_key)
 
-    # 1. Test Groq call directly
-    print("\n--- Testing Groq Direct ---")
+    # 1. Test Gemini call directly
+    print("\n--- Testing Gemini Direct ---")
     try:
-        res = await client._call_groq("You are a helpful assistant", "Say hello")
-        print(f"Groq output: {res}")
+        res = await client._call_gemini("You are a helpful assistant. Keep it concise. No JSON constraint.", "Say hello", want_json=False)
+        print(f"Gemini output: {res}")
     except Exception as e:
-        print(f"Groq failed: {type(e).__name__}: {e}")
+        print(f"Gemini failed: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
 
     # 2. Test reason
     print("\n--- Testing client.reason() ---")
     try:
-        res = await client.reason("You are a database intent parser", "Show me Bangalore customers")
+        res = await client.reason("You are a database intent parser. Return JSON only.", "Show me Bangalore customers")
         print(f"Reasoning output: {res}")
     except Exception as e:
         print(f"Reason failed: {type(e).__name__}: {e}")

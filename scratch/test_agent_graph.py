@@ -21,7 +21,7 @@ async def test_graph():
     await init_db(settings.DATABASE_URL)
     
     llm_client = DualLLMClient(
-        groq_key=settings.GROQ_API_KEY,
+        gemini_key=settings.GEMINI_API_KEY,
     )
 
     state: CampaignState = {
@@ -39,7 +39,9 @@ async def test_graph():
         config = {"configurable": {"thread_id": "test-convo-id"}}
         
         async for event in graph.astream(state, config=config):
-            print(f"\n--- Graph event: {event} ---")
+            # Safe print to handle console encoding limits (e.g. Windows CP1252 vs UTF-8)
+            safe_event_str = str(event).encode("utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8", errors="replace")
+            print(f"\n--- Graph event: {safe_event_str} ---")
     except Exception as e:
         print(f"\nGraph execution failed: {type(e).__name__}: {e}")
         import traceback

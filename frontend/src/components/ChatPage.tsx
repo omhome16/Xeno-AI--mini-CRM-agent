@@ -1,328 +1,284 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User, Brain } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Send, Bot, Brain, ChevronRight, ChevronLeft, Sparkles, X, MessageSquare, Check, Play } from 'lucide-react';
 import {
-  startChat,
   planCampaign,
   executeCampaign,
   connectSSE,
-  type CampaignBrief,
-  type Suggestion,
+  startChat,
+  fetchAudienceRecommendations,
+  fetchStrategyRecommendation,
+  fetchMessageRecommendations,
+  fetchSegmentCount,
+  type AudienceRecommendation,
+  type StrategyRecommendation,
+  type MessageRecommendation,
 } from '../api';
-import CampaignBriefCard from './CampaignBriefCard';
-import SuggestionChips from './SuggestionChips';
-import CampaignPlanCard from './CampaignPlanCard';
-import ExecutionTrail, { type TrailStep } from './ExecutionTrail';
 import CustomerPreviewTable from './CustomerPreviewTable';
+import ExecutionTrail, { type TrailStep } from './ExecutionTrail';
 
-type Phase = 'brainstorm' | 'planning' | 'plan_review' | 'executing' | 'done';
+type Step = 1 | 2 | 3 | 4;
 
-interface ChatMessage {
+interface CopilotMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string;
-  think_pad?: string;
-  suggestions?: Suggestion[];
-  customerPreview?: Record<string, any>[];
-  customerCount?: number;
-}
-
-function formatMessageContent(content: string) {
-  if (!content) return '';
-  const parts = content.split('**');
-  return parts.map((part, index) => {
-    if (index % 2 === 1) {
-      return <strong key={index}>{part}</strong>;
-    }
-    return part;
-  });
 }
 
 export default function ChatPage() {
-  // ── Phase state ──
-  const [phase, setPhase] = useState<Phase>('brainstorm');
+  // ── Step State ──
+  const [currentStep, setCurrentStep] = useState<Step>(1);
   const [conversationId, setConversationId] = useState<string | null>(null);
 
-  // ── Brainstorm state ──
-  const [messages, setMessages] = useState<ChatMessage[]>([{
-    id: 'welcome',
-    role: 'assistant',
-    content: "Hi! I'm your AI Campaign Strategist. Tell me about the campaign you want to create — who do you want to reach, what do you want to say, and how? Let's brainstorm together!",
-    suggestions: [
-      { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
-      { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },
-      { label: 'Welcome new signups', value: 'I want to welcome new customers who just signed up', category: 'audience' },
-      { label: 'VIP exclusive offer', value: 'I want to send an exclusive offer to VIP customers', category: 'offer' },
-    ],
-  }]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [brief, setBrief] = useState<CampaignBrief>({});
-  const [readyToPlan, setReadyToPlan] = useState(false);
+  // ── Form State ──
+  const [selectedCities, setSelectedCities] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [minSpent, setMinSpent] = useState<string>('');
+  const [minOrders, setMinOrders] = useState<string>('');
+  const [selectedGoal, setSelectedGoal] = useState<string>('');
+  const [selectedChannel, setSelectedChannel] = useState<string>('whatsapp');
+  const [messageTemplate, setMessageTemplate] = useState<string>('');
 
-  // ── Plan state ──
-  const [planData, setPlanData] = useState<{
-    audienceCount: number;
-    audiencePreview: Record<string, any>[];
-    audienceSql: string;
-    messageTemplate: string;
-    channel: string;
-    segmentName: string;
-  } | null>(null);
+  // ── Recommendations & Count State ──
+  const [audienceRecs, setAudienceRecs] = useState<AudienceRecommendation[]>([]);
+  const [strategyRec, setStrategyRec] = useState<StrategyRecommendation | null>(null);
+  const [messageRecs, setMessageRecs] = useState<MessageRecommendation[]>([]);
+  const [audienceCount, setAudienceCount] = useState<number>(0);
+  const [audienceSql, setAudienceSql] = useState<string>('');
+  const [audiencePreview, setAudiencePreview] = useState<Record<string, any>[]>([]);
 
-  // ── Execute state ──
+  // ── Loading States ──
+  const [loadingAudience, setLoadingAudience] = useState(false);
+  const [loadingStrategy, setLoadingStrategy] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState(false);
+  const [loadingCount, setLoadingCount] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(false);
+  const [loadingExecute, setLoadingExecute] = useState(false);
+
+  // ── Execution States ──
+  const [executing, setExecuting] = useState(false);
   const [trailSteps, setTrailSteps] = useState<TrailStep[]>([]);
   const [campaignResult, setCampaignResult] = useState<any>(null);
   const [execError, setExecError] = useState<string | undefined>();
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Auto-scroll
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, phase]);
-
-  // Focus input
-  useEffect(() => {
-    if (phase === 'brainstorm' && !loading) {
-      inputRef.current?.focus();
+  // ── Floating Copilot State ──
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [copilotMessages, setCopilotMessages] = useState<CopilotMessage[]>([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content: 'Hi! I am your AI Copilot. You can ask me questions about this campaign, or ask me to change filters (e.g., "change city to Delhi" or "set tags to VIP").'
     }
-  }, [phase, loading]);
+  ]);
+  const [copilotInput, setCopilotInput] = useState('');
+  const [loadingCopilot, setLoadingCopilot] = useState(false);
 
-  // Auto-adjust textarea height based on typing input
+  const copilotEndRef = useRef<HTMLDivElement>(null);
+
+  // ── Predefined list options ──
+  const availableCities = ['Delhi', 'Mumbai', 'Bangalore', 'Pune'];
+  const availableTags = ['vip', 'active', 'lapsed', 'new'];
+
+  // Scroll copilot messages
   useEffect(() => {
-    const textarea = inputRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
-    }
-  }, [input]);
+    copilotEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [copilotMessages, copilotOpen]);
 
-  // ── Build history for API calls ──
-  const getHistory = useCallback(() => {
-    return messages
-      .filter(m => m.role !== 'system' && m.id !== 'welcome')
-      .map(m => ({ role: m.role, content: m.content }));
-  }, [messages]);
-
-  // ── Handle SSE events from brainstorm/query ──
-  const handleChatSSE = useCallback((event: { type: string; data: any }) => {
-    if (event.type === 'step_complete') {
-      const { step, data } = event.data;
-
-      if (step === 'respond_brainstorm' && data) {
-        const aiResponse = data.ai_response || 'Let me help you plan a campaign!';
-        const suggestions = data.suggestions || [];
-        const newBrief = data.brief || {};
-        const isReady = data.ready_to_plan || false;
-
-        setBrief(newBrief);
-        setReadyToPlan(isReady);
-
-        setMessages(prev => {
-          if (prev.some(m => m.content === aiResponse)) return prev;
-          return [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: aiResponse,
-            think_pad: data.think_pad,
-            suggestions,
-          }];
-        });
-        setLoading(false);
-      } else if (step === 'respond_general' && data) {
-        const aiResponse = data.ai_response || 'I\'m here to help!';
-        setMessages(prev => {
-          if (prev.some(m => m.content === aiResponse)) return prev;
-          return [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: aiResponse,
-            think_pad: data.think_pad,
-          }];
-        });
-        setLoading(false);
-      } else if (step === 'build_segment' && data) {
-        // Query result
-        if (data.error) {
-          const errMsg = `Error: ${data.error}`;
-          setMessages(prev => {
-            if (prev.some(m => m.content === errMsg)) return prev;
-            return [...prev, {
-              id: `ai-${Date.now()}`,
-              role: 'assistant',
-              content: errMsg,
-            }];
-          });
-        } else {
-          const count = data.audience_count || 0;
-          const preview = data.audience_preview || [];
-          const countMsg = `Found **${count.toLocaleString()} customers** matching your query.`;
-          setMessages(prev => {
-            if (prev.some(m => m.content === countMsg)) return prev;
-            return [...prev, {
-              id: `ai-${Date.now()}`,
-              role: 'assistant',
-              content: countMsg,
-              customerPreview: preview,
-              customerCount: count,
-            }];
-          });
-        }
-        setLoading(false);
+  // Step 1: Load audience recommendations
+  useEffect(() => {
+    const loadAudienceRecs = async () => {
+      setLoadingAudience(true);
+      try {
+        const recs = await fetchAudienceRecommendations();
+        setAudienceRecs(recs);
+      } catch (err) {
+        console.error('Failed to load audience suggestions', err);
+      } finally {
+        setLoadingAudience(false);
       }
-    } else if (event.type === 'result') {
-      const state = event.data?.state || {};
-
-      // If this was a query/general and we haven't processed it via step_complete
-      if (state.ai_response) {
-        setMessages(prev => {
-          if (prev.some(m => m.content === state.ai_response)) return prev;
-          return [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: state.ai_response,
-            think_pad: state.think_pad,
-            suggestions: state.suggestions || [],
-          }];
-        });
-
-        if (state.brief) setBrief(state.brief);
-        if (state.ready_to_plan) setReadyToPlan(true);
-      }
-
-      // Handle query_customers result
-      if (state.action === 'query_customers' && state.audience_count && !state.ai_response) {
-        const queryMsg = `Found **${(state.audience_count || 0).toLocaleString()} customers** matching your query.`;
-        setMessages(prev => {
-          if (prev.some(m => m.content === queryMsg)) return prev;
-          return [...prev, {
-            id: `ai-${Date.now()}`,
-            role: 'assistant',
-            content: queryMsg,
-            customerPreview: state.audience_preview || [],
-            customerCount: state.audience_count,
-          }];
-        });
-      }
-
-      setLoading(false);
-    } else if (event.type === 'error') {
-      const errMsg = `Warning: ${event.data?.message || 'Something went wrong. Try again.'}`;
-      setMessages(prev => {
-        if (prev.some(m => m.content === errMsg)) return prev;
-        return [...prev, {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: errMsg,
-        }];
-      });
-      setLoading(false);
-    }
+    };
+    loadAudienceRecs();
   }, []);
 
-  // ── Send a brainstorm message ──
-  const handleSend = async (text?: string) => {
-    const msg = text || input.trim();
-    if (!msg || loading) return;
+  // Step 2: Load strategy recommendation on transition or filters change
+  useEffect(() => {
+    if (currentStep !== 2) return;
+    const loadStrategyRec = async () => {
+      setLoadingStrategy(true);
+      try {
+        const filters = {
+          cities: selectedCities,
+          tags: selectedTags,
+          min_spent: minSpent === '' ? null : Number(minSpent),
+          min_orders: minOrders === '' ? null : Number(minOrders)
+        };
+        const rec = await fetchStrategyRecommendation(filters);
+        setStrategyRec(rec);
+      } catch (err) {
+        console.error('Failed to load strategy recommendation', err);
+      } finally {
+        setLoadingStrategy(false);
+      }
+    };
+    loadStrategyRec();
+  }, [currentStep, selectedCities, selectedTags, minSpent, minOrders]);
 
-    setInput('');
-    setMessages(prev => [...prev, {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: msg,
-    }]);
-    setLoading(true);
+  // Step 3: Load message recommendations
+  useEffect(() => {
+    if (currentStep !== 3) return;
+    const loadMessageRecs = async () => {
+      setLoadingMessage(true);
+      try {
+        const desc = getAudienceDescription();
+        const recs = await fetchMessageRecommendations(desc, selectedGoal || 'Promote a sale', selectedChannel);
+        setMessageRecs(recs);
+        // Autofill first copy variation if empty
+        if (recs.length > 0) {
+          setMessageTemplate(recs[0].content);
+        }
+      } catch (err) {
+        console.error('Failed to load message copy variations', err);
+      } finally {
+        setLoadingMessage(false);
+      }
+    };
+    loadMessageRecs();
+  }, [currentStep, selectedGoal, selectedChannel]);
 
-    try {
-      const { conversation_id } = await startChat(msg, 'brainstorm', getHistory(), brief, conversationId || undefined);
-      setConversationId(conversation_id);
-      connectSSE(conversation_id, handleChatSSE);
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        id: `err-${Date.now()}`,
-        role: 'assistant',
-        content: 'Warning: Failed to connect to the AI agent. Is the backend running?',
-      }]);
-      setLoading(false);
-    }
-  };
+  // Debounced Segment Count loader
+  useEffect(() => {
+    const loadCount = async () => {
+      setLoadingCount(true);
+      try {
+        const filters = {
+          cities: selectedCities,
+          tags: selectedTags,
+          min_spent: minSpent === '' ? null : Number(minSpent),
+          min_orders: minOrders === '' ? null : Number(minOrders)
+        };
+        const res = await fetchSegmentCount(filters);
+        setAudienceCount(res.count);
+      } catch (err) {
+        console.error('Failed to load count', err);
+      } finally {
+        setLoadingCount(false);
+      }
+    };
 
-  // ── Handle suggestion chip click ──
-  const handleSuggestionClick = (suggestion: Suggestion) => {
-    if (suggestion.category === 'action' && suggestion.value === 'plan_campaign') {
-      handlePlanCampaign();
+    const timer = setTimeout(loadCount, 300);
+    return () => clearTimeout(timer);
+  }, [selectedCities, selectedTags, minSpent, minOrders]);
+
+  // ── Audience description helper ──
+  const getAudienceDescription = () => {
+    let parts: string[] = [];
+    if (selectedTags.length > 0) {
+      parts.push(selectedTags.join(', ').toUpperCase());
     } else {
-      handleSend(suggestion.value);
+      parts.push('Customers');
+    }
+    if (selectedCities.length > 0) {
+      parts.push(`in ${selectedCities.join(', ')}`);
+    }
+    if (minSpent) {
+      parts.push(`who spent at least ₹${Number(minSpent).toLocaleString()}`);
+    }
+    if (minOrders) {
+      parts.push(`with at least ${minOrders} orders`);
+    }
+    return parts.join(' ');
+  };
+
+  // Toggle items in arrays
+  const toggleCity = (city: string) => {
+    setSelectedCities(prev =>
+      prev.includes(city) ? prev.filter(c => c !== city) : [...prev, city]
+    );
+  };
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags(prev =>
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const applyAudienceSuggestion = (rec: AudienceRecommendation) => {
+    setSelectedCities(rec.filters.cities || []);
+    setSelectedTags(rec.filters.tags || []);
+    setMinSpent(rec.filters.min_spent !== null ? String(rec.filters.min_spent) : '');
+    setMinOrders(rec.filters.min_orders !== null ? String(rec.filters.min_orders) : '');
+  };
+
+  const applyStrategySuggestion = () => {
+    if (strategyRec) {
+      setSelectedGoal(strategyRec.goal);
+      setSelectedChannel(strategyRec.channel);
     }
   };
 
-  // ── Plan the campaign ──
-  const handlePlanCampaign = async () => {
-    setPhase('planning');
-    setLoading(true);
-    setPlanData(null);
-
+  // Transitions to Step 4 (requires running planCampaign graph tool)
+  const handleTransitionToReview = async () => {
+    setLoadingPlan(true);
     try {
-      const { conversation_id } = await planCampaign(brief, getHistory());
+      const brief = {
+        goal: selectedGoal || 'Campaign Promotion',
+        audience: getAudienceDescription(),
+        channel: selectedChannel,
+        message_idea: messageTemplate,
+        offer: ''
+      };
+      
+      const history = copilotMessages
+        .filter(m => m.id !== 'welcome')
+        .map(m => ({ role: m.role, content: m.content }));
+
+      const { conversation_id } = await planCampaign(brief, history);
+      
       connectSSE(conversation_id, (event) => {
         if (event.type === 'result') {
           const state = event.data?.state || {};
-          if (state.audience_count) {
-            setPlanData({
-              audienceCount: state.audience_count,
-              audiencePreview: state.audience_preview || [],
-              audienceSql: state.audience_sql || '',
-              messageTemplate: state.message_template || '',
-              channel: state.channel || brief.channel || 'whatsapp',
-              segmentName: state.segment_name || 'Campaign Segment',
-            });
-            setPhase('plan_review');
-          } else {
-            setMessages(prev => [...prev, {
-              id: `err-${Date.now()}`,
-              role: 'assistant',
-              content: 'Warning: Could not build a plan. Try refining your audience description.',
-            }]);
-            setPhase('brainstorm');
+          if (state.audience_sql) {
+            setAudienceSql(state.audience_sql);
+            setAudiencePreview(state.audience_preview || []);
+            setCurrentStep(4);
           }
-          setLoading(false);
+          setLoadingPlan(false);
         } else if (event.type === 'error') {
-          setMessages(prev => [...prev, {
-            id: `err-${Date.now()}`,
-            role: 'assistant',
-            content: `Warning: ${event.data?.message || 'Planning failed. Try again.'}`,
-          }]);
-          setPhase('brainstorm');
-          setLoading(false);
+          setLoadingPlan(false);
         }
       });
-    } catch {
-      setPhase('brainstorm');
-      setLoading(false);
+    } catch (err) {
+      console.error('Plan generation failed', err);
+      setLoadingPlan(false);
     }
   };
 
-  // ── Launch the campaign ──
+  // Launch approved campaign
   const handleLaunchCampaign = async () => {
-    setPhase('executing');
-    setLoading(true);
+    setExecuting(true);
+    setLoadingExecute(true);
     setCampaignResult(null);
     setExecError(undefined);
     setTrailSteps([
-      { id: '1', label: 'Building Audience', message: 'Querying database...', status: 'running' },
+      { id: '1', label: 'Building Audience', message: 'Creating saved segment...', status: 'running' },
       { id: '2', label: 'Drafting Message', message: 'Generating copy...', status: 'pending' },
       { id: '3', label: 'Creating Campaign', message: 'Setting up records...', status: 'pending' },
     ]);
 
     try {
+      const brief = {
+        goal: selectedGoal,
+        audience: getAudienceDescription(),
+        channel: selectedChannel,
+        message_idea: messageTemplate
+      };
+
       const { conversation_id } = await executeCampaign(
         brief,
-        brief.audience || 'all customers',
-        brief.channel || 'whatsapp',
-        brief.message_idea || '',
-        brief.offer || '',
-        planData?.messageTemplate,
+        getAudienceDescription(),
+        selectedChannel,
+        messageTemplate,
+        '',
+        messageTemplate
       );
 
       connectSSE(conversation_id, (event) => {
@@ -355,7 +311,7 @@ export default function ChatPage() {
               if (isComplete) {
                 updated[0] = { ...updated[0], status: 'done' };
                 updated[1] = { ...updated[1], status: 'done' };
-                updated[2] = { ...updated[2], status: 'done', message: 'Campaign created and launched.' };
+                updated[2] = { ...updated[2], status: 'done', message: 'Campaign launched successfully.' };
               } else {
                 updated[0] = { ...updated[0], status: 'done' };
                 updated[1] = { ...updated[1], status: 'done' };
@@ -375,190 +331,1056 @@ export default function ChatPage() {
               communications_created: state.communications_created || 0,
             });
           }
-          setLoading(false);
+          setLoadingExecute(false);
         } else if (event.type === 'error') {
           setExecError(event.data?.message || 'Execution failed');
-          setTrailSteps(prev => {
-            const updated = [...prev];
-            return updated.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'error' as const } : s);
-          });
-          setLoading(false);
+          setTrailSteps(prev => prev.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'error' as const } : s));
+          setLoadingExecute(false);
         }
       });
     } catch {
-      setExecError('Failed to connect to the execution engine');
-      setLoading(false);
+      setExecError('Failed to connect to execution engine');
+      setLoadingExecute(false);
     }
   };
 
-  // ── Back to brainstorm ──
-  const handleBackToBrainstorm = () => {
-    setPhase('brainstorm');
-    setPlanData(null);
+  // Copilot Message Send
+  const handleSendCopilot = async () => {
+    const text = copilotInput.trim();
+    if (!text || loadingCopilot) return;
+
+    setCopilotInput('');
+    setCopilotMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }]);
+    setLoadingCopilot(true);
+
+    try {
+      const history = copilotMessages
+        .filter(m => m.id !== 'welcome')
+        .map(m => ({ role: m.role, content: m.content }));
+      
+      const brief = {
+        cities: selectedCities,
+        tags: selectedTags,
+        min_spent: minSpent === '' ? null : Number(minSpent),
+        min_orders: minOrders === '' ? null : Number(minOrders),
+        goal: selectedGoal,
+        channel: selectedChannel
+      };
+
+      const { conversation_id } = await startChat(text, 'copilot', history, brief, conversationId || undefined);
+      setConversationId(conversation_id);
+
+      connectSSE(conversation_id, (event) => {
+        if (event.type === 'result') {
+          const state = event.data?.state || {};
+          const reply = state.ai_response || 'Updated.';
+          setCopilotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: reply }]);
+
+          // Sync field updates back to react state
+          const updates = state.field_updates || {};
+          if (updates.cities) setSelectedCities(updates.cities);
+          if (updates.tags) setSelectedTags(updates.tags);
+          if (updates.min_spent !== undefined) setMinSpent(updates.min_spent !== null ? String(updates.min_spent) : '');
+          if (updates.min_orders !== undefined) setMinOrders(updates.min_orders !== null ? String(updates.min_orders) : '');
+          if (updates.goal) setSelectedGoal(updates.goal);
+          if (updates.channel) setSelectedChannel(updates.channel);
+
+          setLoadingCopilot(false);
+        } else if (event.type === 'error') {
+          const errMsg = event.data?.message || 'Error communicating with copilot.';
+          setCopilotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: `Error: ${errMsg}` }]);
+          setLoadingCopilot(false);
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      setLoadingCopilot(false);
+    }
   };
 
-  // ── Start new campaign ──
-  const handleNewCampaign = () => {
-    setPhase('brainstorm');
-    setBrief({});
-    setReadyToPlan(false);
-    setPlanData(null);
-    setConversationId(null);
+  const handleReset = () => {
+    setCurrentStep(1);
+    setSelectedCities([]);
+    setSelectedTags([]);
+    setMinSpent('');
+    setMinOrders('');
+    setSelectedGoal('');
+    setSelectedChannel('whatsapp');
+    setMessageTemplate('');
+    setExecuting(false);
     setCampaignResult(null);
     setExecError(undefined);
-    setTrailSteps([]);
-    setMessages([{
-      id: 'welcome-new',
-      role: 'assistant',
-      content: "Ready for another campaign! What are you thinking?",
-      suggestions: [
-        { label: 'Re-engage lapsed customers', value: 'I want to re-engage customers who haven\'t purchased recently', category: 'audience' },
-        { label: 'Promote a sale', value: 'I want to promote a sale to my customers', category: 'message' },
-        { label: 'VIP exclusive offer', value: 'I want to send an exclusive offer to VIP customers', category: 'offer' },
-      ],
-    }]);
   };
 
-
-
-  // ── Render based on phase ──
   return (
-    <div className="campaign-studio">
-      {/* Phase indicator */}
-      <div className="phase-indicator">
-        <div className={`phase-step ${phase === 'brainstorm' ? 'active' : 'completed'}`}>
-          <span className="phase-dot">1</span>
-          <span className="phase-label">Brainstorm</span>
+    <div className="campaign-studio" style={{ paddingBottom: '5rem' }}>
+      {/* Dynamic CSS Inject */}
+      <style>{`
+        .wizard-graph-flow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 2rem;
+          background: rgba(20, 20, 20, 0.6);
+          backdrop-filter: blur(12px);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          padding: 1.5rem 2rem;
+        }
+        .wizard-node {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          position: relative;
+          z-index: 2;
+          cursor: pointer;
+          transition: all 0.3s ease;
+        }
+        .wizard-node-circle {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #1e1e24;
+          border: 2px solid rgba(255, 255, 255, 0.2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          color: rgba(255, 255, 255, 0.6);
+          transition: all 0.3s ease;
+        }
+        .wizard-node.active .wizard-node-circle {
+          border-color: #6366f1;
+          color: #fff;
+          box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+          background: radial-gradient(circle, #6366f1 0%, #312e81 100%);
+          transform: scale(1.1);
+        }
+        .wizard-node.completed .wizard-node-circle {
+          border-color: #10b981;
+          color: #fff;
+          background: #10b981;
+        }
+        .wizard-node-label {
+          margin-top: 0.5rem;
+          font-size: 0.85rem;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.5);
+        }
+        .wizard-node.active .wizard-node-label {
+          color: #fff;
+        }
+        .wizard-node.completed .wizard-node-label {
+          color: #10b981;
+        }
+        .wizard-line {
+          flex-grow: 1;
+          height: 3px;
+          background: rgba(255, 255, 255, 0.1);
+          margin: 0 1rem;
+          position: relative;
+          top: -16px;
+          z-index: 1;
+        }
+        .wizard-line.completed {
+          background: #10b981;
+        }
+        .wizard-canvas {
+          display: grid;
+          grid-template-columns: 1.2fr 1fr;
+          gap: 1.5rem;
+          min-height: 480px;
+        }
+        .wizard-left-panel {
+          background: rgba(20, 20, 25, 0.5);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          padding: 1.5rem;
+          backdrop-filter: blur(16px);
+          display: flex;
+          flex-direction: column;
+          gap: 1.5rem;
+        }
+        .wizard-right-panel {
+          background: rgba(15, 23, 42, 0.4);
+          border: 1px solid rgba(99, 102, 241, 0.15);
+          border-radius: 16px;
+          padding: 1.5rem;
+          backdrop-filter: blur(16px);
+          display: flex;
+          flex-direction: column;
+          gap: 1.2rem;
+          box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.05);
+        }
+        .panel-title {
+          font-size: 1.1rem;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          color: #fff;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          padding-bottom: 0.75rem;
+          margin: 0;
+        }
+        .ai-recommendation-title {
+          color: #818cf8;
+        }
+        .wizard-form-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .wizard-label {
+          font-size: 0.85rem;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.7);
+        }
+        .tag-selector-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .tag-checkbox-btn {
+          padding: 0.45rem 0.9rem;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: rgba(255, 255, 255, 0.8);
+          font-size: 0.85rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .tag-checkbox-btn.selected {
+          background: rgba(99, 102, 241, 0.15);
+          border-color: #6366f1;
+          color: #fff;
+          box-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+        }
+        .slider-container {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .slider-val-box {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.5);
+        }
+        .slider-val-box span.active {
+          color: #fff;
+          font-weight: 600;
+        }
+        .ai-rec-card {
+          background: rgba(30, 41, 59, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 12px;
+          padding: 1.1rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          transition: all 0.3s ease;
+        }
+        .ai-rec-card:hover {
+          border-color: rgba(99, 102, 241, 0.3);
+          transform: translateY(-2px);
+          background: rgba(30, 41, 59, 0.6);
+        }
+        .ai-rec-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .ai-rec-name {
+          font-weight: 600;
+          font-size: 0.95rem;
+          color: #fff;
+        }
+        .ai-rec-count-badge {
+          font-size: 0.75rem;
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid #10b981;
+          color: #10b981;
+          padding: 0.15rem 0.5rem;
+          border-radius: 12px;
+          font-weight: 600;
+        }
+        .ai-rec-reason {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.6);
+          line-height: 1.4;
+          margin: 0;
+        }
+        .ai-rec-apply-btn {
+          align-self: flex-start;
+          font-size: 0.8rem;
+          padding: 0.35rem 0.75rem;
+          border-radius: 6px;
+          background: #6366f1;
+          color: #fff;
+          border: none;
+          cursor: pointer;
+          font-weight: 500;
+          transition: all 0.2s ease;
+        }
+        .ai-rec-apply-btn:hover {
+          background: #4f46e5;
+          box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+        }
+        .matching-badge-container {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          background: rgba(16, 185, 129, 0.08);
+          border: 1px solid rgba(16, 185, 129, 0.2);
+          border-radius: 10px;
+          padding: 0.75rem 1rem;
+          margin-top: auto;
+        }
+        .matching-pulse-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #10b981;
+          box-shadow: 0 0 8px #10b981;
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+          0% { transform: scale(0.95); opacity: 0.5; }
+          50% { transform: scale(1.05); opacity: 1; }
+          100% { transform: scale(0.95); opacity: 0.5; }
+        }
+        .matching-text {
+          font-size: 0.9rem;
+          color: rgba(255, 255, 255, 0.8);
+        }
+        .floating-copilot-btn {
+          position: fixed;
+          bottom: 2rem;
+          right: 2rem;
+          width: 56px;
+          height: 56px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+          color: #fff;
+          border: none;
+          box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          z-index: 1000;
+          transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .floating-copilot-btn:hover {
+          transform: scale(1.08) rotate(5deg);
+        }
+        .floating-copilot-chat {
+          position: fixed;
+          bottom: 6rem;
+          right: 2rem;
+          width: 380px;
+          height: 500px;
+          border-radius: 16px;
+          background: rgba(15, 23, 42, 0.95);
+          border: 1px solid rgba(99, 102, 241, 0.3);
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+          backdrop-filter: blur(20px);
+          z-index: 1000;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          animation: slideUp 0.3s ease;
+        }
+        @keyframes slideUp {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .copilot-header {
+          padding: 1rem;
+          background: rgba(99, 102, 241, 0.15);
+          border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .copilot-header-title {
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          color: #fff;
+        }
+        .copilot-messages {
+          flex-grow: 1;
+          padding: 1rem;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        .copilot-msg {
+          max-width: 85%;
+          padding: 0.7rem 0.9rem;
+          border-radius: 12px;
+          font-size: 0.85rem;
+          line-height: 1.4;
+        }
+        .copilot-msg-user {
+          background: #6366f1;
+          color: #fff;
+          align-self: flex-end;
+          border-bottom-right-radius: 2px;
+        }
+        .copilot-msg-assistant {
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          color: rgba(255, 255, 255, 0.9);
+          align-self: flex-start;
+          border-bottom-left-radius: 2px;
+        }
+        .copilot-input-bar {
+          padding: 0.75rem;
+          background: rgba(0, 0, 0, 0.3);
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          display: flex;
+          gap: 0.5rem;
+        }
+        .copilot-input {
+          flex-grow: 1;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          color: #fff;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.85rem;
+          outline: none;
+        }
+        .copilot-input:focus {
+          border-color: #6366f1;
+        }
+        .copilot-send-btn {
+          background: #6366f1;
+          color: #fff;
+          border: none;
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .copilot-send-btn:hover {
+          background: #4f46e5;
+        }
+        .msg-var-selector {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .msg-var-card {
+          background: rgba(30, 41, 59, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 12px;
+          padding: 1.1rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .msg-var-card.active {
+          border-color: #6366f1;
+          background: rgba(99, 102, 241, 0.08);
+          box-shadow: 0 0 15px rgba(99, 102, 241, 0.1);
+        }
+        .msg-var-header {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.9rem;
+          font-weight: 600;
+        }
+        .msg-var-type {
+          color: #818cf8;
+        }
+        .msg-var-content {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.85);
+          white-space: pre-wrap;
+          background: rgba(0, 0, 0, 0.2);
+          padding: 0.75rem;
+          border-radius: 8px;
+        }
+        .msg-var-reason {
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.5);
+          font-style: italic;
+        }
+        .goal-deck {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0.75rem;
+        }
+        .goal-card {
+          padding: 1.2rem;
+          border-radius: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.02);
+          color: rgba(255, 255, 255, 0.7);
+          cursor: pointer;
+          font-weight: 500;
+          font-size: 0.9rem;
+          text-align: center;
+          transition: all 0.2s ease;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 80px;
+        }
+        .goal-card.active {
+          border-color: #6366f1;
+          background: rgba(99, 102, 241, 0.1);
+          color: #fff;
+          box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+        }
+        .wizard-footer {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 2rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          padding-top: 1.5rem;
+        }
+        .wizard-btn {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.6rem 1.2rem;
+          border-radius: 8px;
+          font-weight: 600;
+          font-size: 0.9rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .wizard-btn-prev {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: rgba(255, 255, 255, 0.8);
+        }
+        .wizard-btn-prev:hover {
+          background: rgba(255, 255, 255, 0.1);
+        }
+        .wizard-btn-next {
+          background: #6366f1;
+          border: none;
+          color: #fff;
+        }
+        .wizard-btn-next:hover {
+          background: #4f46e5;
+          box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+        }
+        .review-panel {
+          grid-column: span 2;
+          display: flex;
+          flex-direction: column;
+          gap: 1.5rem;
+        }
+        .review-card {
+          background: rgba(20, 20, 25, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          padding: 1.5rem;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1.5rem;
+        }
+        .review-item {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+        .review-label {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.4);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .review-value {
+          font-size: 1rem;
+          color: #fff;
+          font-weight: 500;
+        }
+        .review-sql-box {
+          grid-column: span 2;
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 8px;
+          padding: 1rem;
+          font-family: monospace;
+          font-size: 0.85rem;
+          color: #38bdf8;
+          max-height: 120px;
+          overflow-y: auto;
+          white-space: pre-wrap;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .review-msg-box {
+          grid-column: span 2;
+          background: rgba(99, 102, 241, 0.05);
+          border: 1px solid rgba(99, 102, 241, 0.1);
+          border-radius: 12px;
+          padding: 1.2rem;
+          font-size: 0.95rem;
+          color: rgba(255, 255, 255, 0.9);
+          white-space: pre-wrap;
+          line-height: 1.5;
+        }
+      `}</style>
+
+      {/* Top Visual Graph Progress Flow */}
+      <div className="wizard-graph-flow">
+        <div className={`wizard-node ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`} onClick={() => !executing && setCurrentStep(1)}>
+          <div className="wizard-node-circle">{currentStep > 1 ? <Check size={16} /> : '1'}</div>
+          <span className="wizard-node-label">Segment Builder</span>
         </div>
-        <div className="phase-connector" />
-        <div className={`phase-step ${phase === 'planning' || phase === 'plan_review' ? 'active' : (phase === 'executing' || phase === 'done' ? 'completed' : '')}`}>
-          <span className="phase-dot">2</span>
-          <span className="phase-label">Plan</span>
+        <div className={`wizard-line ${currentStep > 1 ? 'completed' : ''}`} />
+        
+        <div className={`wizard-node ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 2 && setCurrentStep(2)}>
+          <div className="wizard-node-circle">{currentStep > 2 ? <Check size={16} /> : '2'}</div>
+          <span className="wizard-node-label">Goal & Channel</span>
         </div>
-        <div className="phase-connector" />
-        <div className={`phase-step ${phase === 'executing' || phase === 'done' ? 'active' : ''}`}>
-          <span className="phase-dot">3</span>
-          <span className="phase-label">Execute</span>
+        <div className={`wizard-line ${currentStep > 2 ? 'completed' : ''}`} />
+
+        <div className={`wizard-node ${currentStep === 3 ? 'active' : ''} ${currentStep > 3 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 3 && setCurrentStep(3)}>
+          <div className="wizard-node-circle">{currentStep > 3 ? <Check size={16} /> : '3'}</div>
+          <span className="wizard-node-label">Copywriter</span>
+        </div>
+        <div className={`wizard-line ${currentStep > 3 ? 'completed' : ''}`} />
+
+        <div className={`wizard-node ${currentStep === 4 ? 'active' : ''}`} onClick={() => !executing && currentStep >= 4 && setCurrentStep(4)}>
+          <div className="wizard-node-circle">4</div>
+          <span className="wizard-node-label">Launch Review</span>
         </div>
       </div>
 
-      {/* Main content area */}
-      <div className="studio-content">
-        {/* Brainstorm Phase */}
-        {(phase === 'brainstorm' || phase === 'planning') && (
-          <div className="brainstorm-layout">
-            <div className="chat-area">
-              <div className="chat-messages">
-                {messages.map(msg => (
-                  <div key={msg.id} className={`chat-msg chat-msg-${msg.role}`}>
-                    <div className="msg-avatar">
-                      {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
-                    </div>
-                    <div className="msg-body">
-                      <div className="msg-content">{formatMessageContent(msg.content)}</div>
-                      {msg.think_pad && (
-                        <div className="thought-process-box">
-                          <details>
-                            <summary className="thought-summary">
-                              <Brain size={13} className="thought-icon" />
-                              <span>View Agent Thought Process</span>
-                            </summary>
-                            <div className="thought-content">{msg.think_pad}</div>
-                          </details>
-                        </div>
-                      )}
-                      {msg.customerPreview && (
-                        <CustomerPreviewTable preview={msg.customerPreview} totalCount={msg.customerCount || 0} />
-                      )}
-                      {msg.suggestions && msg.suggestions.length > 0 && (
-                        <SuggestionChips
-                          suggestions={msg.suggestions}
-                          onSelect={handleSuggestionClick}
-                        />
-                      )}
+      {/* Execution view takes over when launching */}
+      {executing ? (
+        <div className="execution-area" style={{ maxWidth: '800px', margin: '0 auto' }}>
+          <ExecutionTrail
+            steps={trailSteps}
+            campaignResult={campaignResult}
+            error={execError}
+            onDone={handleReset}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Main Wizard Canvas */}
+          <div className="wizard-canvas">
+            
+            {/* Step 1: Segment & Audience Builder */}
+            {currentStep === 1 && (
+              <>
+                <div className="wizard-left-panel">
+                  <h3 className="panel-title"><Sparkles size={16} /> Define Segment Filters</h3>
+                  
+                  {/* Cities Select */}
+                  <div className="wizard-form-group">
+                    <label className="wizard-label">Cities</label>
+                    <div className="tag-selector-grid">
+                      {availableCities.map(city => (
+                        <button
+                          key={city}
+                          onClick={() => toggleCity(city)}
+                          className={`tag-checkbox-btn ${selectedCities.includes(city) ? 'selected' : ''}`}
+                        >
+                          {city}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                ))}
-                {loading && (
-                  <div className="chat-msg chat-msg-assistant">
-                    <div className="msg-avatar"><Bot size={16} /></div>
-                    <div className="msg-body">
-                      <div className="msg-content thinking">
-                        <div className="thinking-dots"><span /><span /><span /></div>
-                      </div>
+
+                  {/* Tags Checkbox selector */}
+                  <div className="wizard-form-group">
+                    <label className="wizard-label">Audience Tags</label>
+                    <div className="tag-selector-grid">
+                      {availableTags.map(tag => (
+                        <button
+                          key={tag}
+                          onClick={() => toggleTag(tag)}
+                          className={`tag-checkbox-btn ${selectedTags.includes(tag) ? 'selected' : ''}`}
+                        >
+                          {tag.toUpperCase()}
+                        </button>
+                      ))}
                     </div>
+                  </div>
+
+                  {/* Min Spent slider */}
+                  <div className="wizard-form-group slider-container">
+                    <div className="slider-val-box">
+                      <span className="wizard-label">Min Total Spent</span>
+                      <span className={minSpent ? 'active' : ''}>
+                        {minSpent ? `₹${Number(minSpent).toLocaleString()}+` : 'Any'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100000"
+                      step="5000"
+                      value={minSpent || '0'}
+                      onChange={e => setMinSpent(e.target.value === '0' ? '' : e.target.value)}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                  </div>
+
+                  {/* Min Orders slider */}
+                  <div className="wizard-form-group slider-container">
+                    <div className="slider-val-box">
+                      <span className="wizard-label">Min Total Orders</span>
+                      <span className={minOrders ? 'active' : ''}>
+                        {minOrders ? `${minOrders}+ orders` : 'Any'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="20"
+                      step="1"
+                      value={minOrders || '0'}
+                      onChange={e => setMinOrders(e.target.value === '0' ? '' : e.target.value)}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                  </div>
+
+                  {/* Dynamic customers count badge */}
+                  <div className="matching-badge-container">
+                    <div className="matching-pulse-dot" />
+                    <span className="matching-text">
+                      {loadingCount ? 'Recalculating...' : `Found ${audienceCount.toLocaleString()} matching customers in segment`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="wizard-right-panel">
+                  <h3 className="panel-title ai-recommendation-title"><Brain size={16} /> AI Segment Recommendations</h3>
+                  
+                  {loadingAudience ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
+                      <div className="thinking-dots"><span /><span /><span /></div>
+                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Analyzing database statistics...</span>
+                    </div>
+                  ) : audienceRecs.length > 0 ? (
+                    audienceRecs.map((rec, i) => (
+                      <div key={i} className="ai-rec-card">
+                        <div className="ai-rec-header">
+                          <span className="ai-rec-name">{rec.name}</span>
+                          <span className="ai-rec-count-badge">~{rec.count} matches</span>
+                        </div>
+                        <p className="ai-rec-reason">{rec.reason}</p>
+                        <button
+                          className="ai-rec-apply-btn"
+                          onClick={() => applyAudienceSuggestion(rec)}
+                        >
+                          Apply AI Segment
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                      No segment recommendations available. Adjust data ingestion.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Step 2: Goal & Channel */}
+            {currentStep === 2 && (
+              <>
+                <div className="wizard-left-panel">
+                  <h3 className="panel-title"><Sparkles size={16} /> Campaign Strategy</h3>
+
+                  {/* Goal Cards Grid */}
+                  <div className="wizard-form-group">
+                    <label className="wizard-label" style={{ marginBottom: '0.5rem' }}>Select Campaign Goal</label>
+                    <div className="goal-deck">
+                      {[
+                        { title: 'Re-engage lapsed customers', val: 'Re-engage lapsed customers' },
+                        { title: 'Promote a sale', val: 'Promote a sale' },
+                        { title: 'Welcome new signups', val: 'Welcome new signups' },
+                        { title: 'VIP exclusive offer', val: 'VIP exclusive offer' }
+                      ].map(goal => (
+                        <div
+                          key={goal.val}
+                          className={`goal-card ${selectedGoal === goal.val ? 'active' : ''}`}
+                          onClick={() => setSelectedGoal(goal.val)}
+                        >
+                          {goal.title}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Channel Dropdown */}
+                  <div className="wizard-form-group">
+                    <label className="wizard-label">Communication Channel</label>
+                    <select
+                      value={selectedChannel}
+                      onChange={e => setSelectedChannel(e.target.value)}
+                      className="tag-checkbox-btn"
+                      style={{ width: '100%', outline: 'none', background: 'rgba(15,15,20,0.8)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '0.6rem' }}
+                    >
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="email">Email</option>
+                      <option value="sms">SMS</option>
+                      <option value="rcs">RCS</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="wizard-right-panel">
+                  <h3 className="panel-title ai-recommendation-title"><Brain size={16} /> AI Strategy Recommendation</h3>
+
+                  {loadingStrategy ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
+                      <div className="thinking-dots"><span /><span /><span /></div>
+                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Evaluating filters for channel matching...</span>
+                    </div>
+                  ) : strategyRec ? (
+                    <div className="ai-rec-card" style={{ border: '1px solid rgba(99,102,241,0.25)', background: 'rgba(15,23,42,0.6)' }}>
+                      <div className="ai-rec-header" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.5rem' }}>
+                        <span className="ai-rec-name" style={{ color: '#818cf8' }}>Recommended Plan</span>
+                      </div>
+                      <div style={{ margin: '0.5rem 0', fontSize: '0.85rem' }}>
+                        <div><strong>Goal:</strong> {strategyRec.goal}</div>
+                        <div style={{ marginTop: '0.2rem' }}><strong>Channel:</strong> {strategyRec.channel.toUpperCase()}</div>
+                      </div>
+                      <p className="ai-rec-reason" style={{ fontSize: '0.85rem' }}>{strategyRec.reason}</p>
+                      <button
+                        className="ai-rec-apply-btn"
+                        onClick={applyStrategySuggestion}
+                        style={{ marginTop: '0.5rem' }}
+                      >
+                        Apply AI Strategy
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                      Set segment filters to generate strategy recommendations.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Step 3: Message Copywriter */}
+            {currentStep === 3 && (
+              <>
+                <div className="wizard-left-panel">
+                  <h3 className="panel-title"><Sparkles size={16} /> Message Editor</h3>
+
+                  {/* Rich template area */}
+                  <div className="wizard-form-group">
+                    <label className="wizard-label">Draft Message Copy</label>
+                    <textarea
+                      value={messageTemplate}
+                      onChange={e => setMessageTemplate(e.target.value)}
+                      className="chat-input"
+                      rows={10}
+                      style={{ background: 'rgba(10,10,15,0.5)', width: '100%', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '0.8rem', outline: 'none', borderRadius: '8px', fontSize: '0.9rem', lineHeight: '1.5', fontFamily: 'inherit' }}
+                      placeholder="Your campaign copy..."
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', marginTop: '0.25rem' }}>
+                      <span>Placeholders available: <code>{"{{name}}"}</code>, <code>{"{{city}}"}</code></span>
+                      <span>{messageTemplate.length} characters</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="wizard-right-panel">
+                  <h3 className="panel-title ai-recommendation-title"><Brain size={16} /> AI Message Copy Variants</h3>
+
+                  {loadingMessage ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
+                      <div className="thinking-dots"><span /><span /><span /></div>
+                      <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>Drafting channel-appropriate copy...</span>
+                    </div>
+                  ) : messageRecs.length > 0 ? (
+                    <div className="msg-var-selector">
+                      {messageRecs.map((rec, i) => (
+                        <div
+                          key={i}
+                          className={`msg-var-card ${messageTemplate === rec.content ? 'active' : ''}`}
+                          onClick={() => setMessageTemplate(rec.content)}
+                        >
+                          <div className="msg-var-header">
+                            <span className="msg-var-type">{rec.type} Variation</span>
+                            {messageTemplate === rec.content && <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.2rem', fontSize: '0.75rem' }}><Check size={12} /> Active</span>}
+                          </div>
+                          <div className="msg-var-content">{rec.content}</div>
+                          <p className="msg-var-reason">Reason: {rec.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                      No copy variants generated. Complete previous stages.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Step 4: Launch Review */}
+            {currentStep === 4 && (
+              <div className="review-panel">
+                <h3 className="panel-title"><Sparkles size={16} /> Campaign Plan Final Review</h3>
+                
+                <div className="review-card">
+                  <div className="review-item">
+                    <span className="review-label">Audience Segment</span>
+                    <span className="review-value" style={{ color: '#818cf8' }}>{getAudienceDescription()}</span>
+                  </div>
+                  
+                  <div className="review-item">
+                    <span className="review-label">Audience Count</span>
+                    <span className="review-value" style={{ color: '#10b981' }}>{audienceCount.toLocaleString()} Customers</span>
+                  </div>
+
+                  <div className="review-item">
+                    <span className="review-label">Goal Target</span>
+                    <span className="review-value">{selectedGoal || 'General Promotion'}</span>
+                  </div>
+
+                  <div className="review-item">
+                    <span className="review-label">Channel</span>
+                    <span className="review-value" style={{ textTransform: 'uppercase' }}>{selectedChannel}</span>
+                  </div>
+
+                  <div className="review-sql-box">
+                    <strong>Generated Database SQL:</strong><br />
+                    {audienceSql}
+                  </div>
+
+                  <div className="review-msg-box">
+                    <strong>Approved Copy Body:</strong><br />
+                    {messageTemplate}
+                  </div>
+                </div>
+
+                {/* Direct display of preview list */}
+                {audiencePreview.length > 0 && (
+                  <div style={{ marginTop: '1rem' }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.95rem', fontWeight: 600 }}>Target Audience Preview</h4>
+                    <CustomerPreviewTable preview={audiencePreview} totalCount={audienceCount} />
                   </div>
                 )}
-                <div ref={chatEndRef} />
               </div>
+            )}
 
-              {/* Input bar */}
-              <div className="chat-input-bar glass">
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder={loading ? 'AI is thinking...' : 'Describe your campaign idea...'}
-                  disabled={loading || phase === 'planning'}
-                  className="chat-input"
-                  rows={1}
-                />
-                <button
-                  className="chat-send-btn"
-                  onClick={() => handleSend()}
-                  disabled={!input.trim() || loading || phase === 'planning'}
-                >
-                  <Send size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Brief sidebar */}
-            <div className="brief-sidebar">
-              <CampaignBriefCard
-                brief={brief}
-                readyToPlan={readyToPlan}
-                onPlanClick={handlePlanCampaign}
-              />
-            </div>
           </div>
-        )}
 
-        {/* Plan Review Phase */}
-        {phase === 'plan_review' && planData && (
-          <div className="plan-review-area">
-            <CampaignPlanCard
-              {...planData}
-              audienceDescription={brief.audience}
-              offerDetails={brief.offer}
-              onLaunch={handleLaunchCampaign}
-              onBack={handleBackToBrainstorm}
-              onUpdateMessage={(newMessage) => {
-                setPlanData(prev => prev ? { ...prev, messageTemplate: newMessage } : null);
+          {/* Bottom Navigation Controls */}
+          <div className="wizard-footer">
+            {currentStep > 1 ? (
+              <button
+                className="wizard-btn wizard-btn-prev"
+                onClick={() => setCurrentStep(prev => (prev - 1) as Step)}
+              >
+                <ChevronLeft size={16} /> Back
+              </button>
+            ) : (
+              <div />
+            )}
+
+            {currentStep < 4 ? (
+              <button
+                className="wizard-btn wizard-btn-next"
+                disabled={loadingPlan || (currentStep === 1 && audienceCount === 0)}
+                onClick={() => {
+                  if (currentStep === 3) {
+                    handleTransitionToReview();
+                  } else {
+                    setCurrentStep(prev => (prev + 1) as Step);
+                  }
+                }}
+              >
+                {loadingPlan ? (
+                  <>Evaluating segment graph...</>
+                ) : (
+                  <>Next <ChevronRight size={16} /></>
+                )}
+              </button>
+            ) : (
+              <button
+                className="wizard-btn wizard-btn-next"
+                style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', boxShadow: '0 0 15px rgba(16,185,129,0.3)' }}
+                disabled={loadingExecute || audienceCount === 0}
+                onClick={handleLaunchCampaign}
+              >
+                <Play size={16} /> Launch Campaign End-to-End
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Floating AI Copilot Chat Toggle Button */}
+      <button
+        className="floating-copilot-btn"
+        onClick={() => setCopilotOpen(prev => !prev)}
+      >
+        {copilotOpen ? <X size={22} /> : <MessageSquare size={22} />}
+      </button>
+
+      {/* Floating Drawer / Chat Box */}
+      {copilotOpen && (
+        <div className="floating-copilot-chat">
+          <div className="copilot-header">
+            <span className="copilot-header-title"><Bot size={18} style={{ color: '#818cf8' }} /> Campaign Copilot</span>
+            <button style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer' }} onClick={() => setCopilotOpen(false)}><X size={16} /></button>
+          </div>
+          
+          <div className="copilot-messages">
+            {copilotMessages.map(msg => (
+              <div key={msg.id} className={`copilot-msg copilot-msg-${msg.role}`}>
+                {msg.content}
+              </div>
+            ))}
+            {loadingCopilot && (
+              <div className="copilot-msg copilot-msg-assistant" style={{ opacity: 0.7 }}>
+                Thinking...
+              </div>
+            )}
+            <div ref={copilotEndRef} />
+          </div>
+
+          <div className="copilot-input-bar">
+            <input
+              type="text"
+              value={copilotInput}
+              onChange={e => setCopilotInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') handleSendCopilot();
               }}
-              loading={loading}
+              placeholder="Ask me to change fields or ask a doubt..."
+              disabled={loadingCopilot}
+              className="copilot-input"
             />
+            <button
+              className="copilot-send-btn"
+              disabled={!copilotInput.trim() || loadingCopilot}
+              onClick={handleSendCopilot}
+            >
+              <Send size={14} />
+            </button>
           </div>
-        )}
-
-        {/* Execution Phase */}
-        {phase === 'executing' && (
-          <div className="execution-area">
-            <ExecutionTrail
-              steps={trailSteps}
-              campaignResult={campaignResult}
-              error={execError}
-              onDone={handleNewCampaign}
-            />
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

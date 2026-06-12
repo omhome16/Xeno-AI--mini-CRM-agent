@@ -147,19 +147,6 @@ export async function executeCampaign(
   return res.json();
 }
 
-export async function resumeChat(
-  conversationId: string,
-  response: Record<string, unknown>,
-): Promise<{ conversation_id: string }> {
-  const res = await fetch(`${API_BASE}/api/chat/resume`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversation_id: conversationId, response }),
-  });
-  if (!res.ok) throw new Error(`Resume failed: ${res.status}`);
-  return res.json();
-}
-
 export function connectSSE(
   conversationId: string,
   onEvent: (event: { type: string; data: any }) => void,
@@ -295,5 +282,73 @@ export async function ingestOrders(csvText: string): Promise<{ status: string; c
     const errData = await res.json().catch(() => ({ detail: 'Failed to ingest orders' }));
     throw new Error(errData.detail || 'Failed to ingest orders');
   }
+  return res.json();
+}
+
+// ── Recommendation & Count API (Campaign Creator Wizard) ──
+
+export interface AudienceRecommendation {
+  name: string;
+  filters: Record<string, any>;
+  count: number;
+  reason: string;
+}
+
+export interface StrategyRecommendation {
+  goal: string;
+  channel: string;
+  reason: string;
+}
+
+export interface MessageRecommendation {
+  type: string;
+  content: string;
+  reason: string;
+}
+
+export async function fetchAudienceRecommendations(): Promise<AudienceRecommendation[]> {
+  const res = await fetch(`${API_BASE}/api/chat/recommendations/audience`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to fetch audience recommendations');
+  return res.json();
+}
+
+export async function fetchStrategyRecommendation(filters: Record<string, any>): Promise<StrategyRecommendation> {
+  const res = await fetch(`${API_BASE}/api/chat/recommendations/strategy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  });
+  if (!res.ok) throw new Error('Failed to fetch strategy recommendation');
+  return res.json();
+}
+
+export async function fetchMessageRecommendations(
+  audienceDesc: string,
+  goal: string,
+  channel: string,
+): Promise<MessageRecommendation[]> {
+  const res = await fetch(`${API_BASE}/api/chat/recommendations/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audience_desc: audienceDesc,
+      goal,
+      channel,
+    }),
+  });
+  if (!res.ok) throw new Error('Failed to fetch message recommendations');
+  return res.json();
+}
+
+export async function fetchSegmentCount(filters: Record<string, any>): Promise<{ count: number }> {
+  const res = await fetch(`${API_BASE}/api/chat/count`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  });
+  if (!res.ok) throw new Error('Failed to fetch segment count');
   return res.json();
 }

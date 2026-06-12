@@ -104,9 +104,9 @@ export default function App() {
         <div className="sidebar-footer">
           <div className="sidebar-footer-card">
             <div className="footer-label">Orchestration Engine</div>
-            <div className="footer-sub">Groq &middot; LangGraph</div>
+            <div className="footer-sub">Gemini &middot; LangGraph</div>
             <div className="footer-badges">
-              <span className="badge badge-sending">Groq</span>
+              <span className="badge badge-sending">Gemini</span>
             </div>
           </div>
         </div>

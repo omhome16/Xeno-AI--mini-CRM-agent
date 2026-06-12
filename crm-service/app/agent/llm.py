@@ -1,185 +1,144 @@
 """
-Groq LLM Client — Used for all agent tasks (reasoning, intent parsing, SQL generation, and message drafting).
+Gemini LLM Client — Supports Gemini 2.5 Flash as the sole model provider.
 
-Previously, this was a dual LLM setup, but Gemini was completely decommissioned due to reliability and rate limit issues.
+If GEMINI_API_KEY is found in the environment, it uses Gemini 2.5 Flash
+(via direct async HTTPX calls).
+
+Public API:
+  client.reason(system_prompt, user_input)   → Always returns JSON string
+  client.generate(system_prompt, user_input) → Returns free-text string
 """
 
-import json
+import asyncio
 import logging
-from typing import Any, Optional
+import os
+import httpx
 
 logger = logging.getLogger(__name__)
 
+_TEMPERATURE = 0.3
+_MAX_TOKENS = 2048
+_RATE_LIMIT_BACKOFF_SECS = 2.0
+
 
 class LLMError(Exception):
-    """Raised when the LLM provider fails."""
+    """Raised when the Gemini LLM provider is unavailable or all retries are exhausted."""
     pass
 
 
-class GroqLLMClient:
+class GeminiLLMClient:
     """
-    Groq LLM client (previously Dual LLM Client, refactored to use Groq exclusively).
+    Gemini LLM Client utilizing Gemini 2.5 Flash.
+
+    Usage:
+        client = GeminiLLMClient(gemini_key="AQ...")
+        json_str = await client.reason(system_prompt, user_input)
+        text     = await client.generate(system_prompt, user_input)
     """
 
-    def __init__(self, groq_key: str = ""):
-        self._groq_key = groq_key
-        self._groq_client = None
+    def __init__(self, gemini_key: str = ""):
+        try:
+            from app.config import get_settings
+            settings = get_settings()
+            self._gemini_key = gemini_key or getattr(settings, "GEMINI_API_KEY", "") or ""
+        except Exception:
+            self._gemini_key = gemini_key or os.environ.get("GEMINI_API_KEY") or ""
 
-    def _get_groq(self):
-        """Lazy-initialize Groq client."""
-        if self._groq_client is None and self._groq_key:
-            try:
-                from groq import Groq
-                self._groq_client = Groq(api_key=self._groq_key, max_retries=0)
-                logger.info("Groq client initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Groq: {e}")
-        return self._groq_client
+    # ── Public Methods ────────────────────────────────────────────────────────
 
-    async def reason(
-        self,
-        system_prompt: str,
-        user_input: str,
-        response_schema: Optional[dict] = None,
-    ) -> str:
+    async def reason(self, system_prompt: str, user_input: str) -> str:
         """
-        Use Groq for reasoning tasks (intent parsing, SQL generation).
+        Structured reasoning — always returns a JSON string.
         """
-        groq = self._get_groq()
-        if groq:
-            try:
-                # Only use JSON mode if response_schema is provided, or if the prompt requests JSON
-                use_json = response_schema is not None or "json" in system_prompt.lower()
-                fmt = {"type": "json_object"} if use_json else None
-                result = await self._call_groq(
-                    system_prompt,
-                    user_input,
-                    response_format=fmt,
-                )
-                if result:
-                    return result
-            except Exception as e:
-                logger.error(f"Groq reasoning execution failed: {e}")
-                raise e
+        return await self._call_gemini(system_prompt, user_input, want_json=True)
 
-        raise LLMError("Groq provider not configured or failed for reasoning task")
-
-    async def generate(
-        self,
-        system_prompt: str,
-        user_input: str,
-    ) -> str:
+    async def generate(self, system_prompt: str, user_input: str) -> str:
         """
-        Use Groq for fast text generation (message drafting).
+        Free-text generation — returns a plain string.
         """
-        groq = self._get_groq()
-        if groq:
-            try:
-                result = await self._call_groq(system_prompt, user_input)
-                if result:
-                    return result
-            except Exception as e:
-                logger.error(f"Groq generation failed: {e}")
-                raise e
+        return await self._call_gemini(system_prompt, user_input, want_json=False)
 
-        raise LLMError("Groq provider not configured or failed for generation task")
+    # ── Gemini Async API Call ──────────────────────────────────────────────────
 
-    async def _call_groq(
-        self,
-        system_prompt: str,
-        user_input: str,
-        response_format: Optional[dict] = None,
-    ) -> Optional[str]:
-        """Call Groq API with robust model cycling and JSON retry."""
-        import asyncio
-        client = self._get_groq()
-        if not client:
-            return None
+    async def _call_gemini(self, system_prompt: str, user_input: str, want_json: bool) -> str:
+        """
+        Direct async HTTP call to Google's Gemini 2.5 Flash API.
+        """
+        if not self._gemini_key:
+            raise LLMError("Gemini API key is not configured. Set GEMINI_API_KEY.")
 
-        # Standard active Groq models in prioritized order
-        models = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-        ]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self._gemini_key}"
+        
+        generation_config = {
+            "temperature": _TEMPERATURE,
+            "maxOutputTokens": _MAX_TOKENS,
+        }
+        if want_json:
+            generation_config["responseMimeType"] = "application/json"
 
-        def _sync_call(model_name: str, use_json_format: bool = True):
-            # Ensure "json" is present if we are requesting JSON format to avoid Groq 400 error
-            sys_prompt = system_prompt
-            if response_format and use_json_format and "json" not in sys_prompt.lower() and "json" not in user_input.lower():
-                sys_prompt += "\n\nReturn the response as a JSON object."
-
-            kwargs = {
-                "model": model_name,
-                "messages": [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_input},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 2048,
-            }
-            if response_format and use_json_format:
-                kwargs["response_format"] = response_format
-            response = client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": user_input}]
+                }
+            ],
+            "systemInstruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "generationConfig": generation_config
+        }
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
 
         last_error = None
-        for model in models:
-            for attempt in range(2):  # Try each model up to 2 times if rate limited
-                try:
-                    result = await asyncio.to_thread(_sync_call, model, True)
-                    if result is not None:
-                        logger.debug(f"Groq ({model}) response: {result[:200]}...")
-                        return result
-                except Exception as e:
-                    err_str = str(e).lower()
-                    last_error = e
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+                    if response.status_code == 429:
+                        logger.warning(f"[Gemini] Rate limit hit. Attempt {attempt + 1}. Backing off...")
+                        await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECS)
+                        continue
+                    
+                    if response.status_code != 200:
+                        raise LLMError(f"Gemini API error (Status {response.status_code}): {response.text}")
+                    
+                    data = response.json()
+                    try:
+                        content = data["candidates"][0]["content"]["parts"][0]["text"]
+                        if not content or not content.strip():
+                            raise LLMError("Gemini returned an empty response.")
+                        logger.debug(f"[Gemini] OK: {content[:100]}...")
+                        return content
+                    except (KeyError, IndexError) as parse_err:
+                        raise LLMError(f"Failed to parse Gemini response structure: {data}") from parse_err
 
-                    # 1. Check if it's a rate limit error (429)
-                    if "429" in err_str or "rate_limit" in err_str or "limit" in err_str or "exhaust" in err_str or "rate limit" in err_str:
-                        if attempt == 0:
-                            logger.warning(f"Groq ({model}) hit rate limit, retrying after 1.5s backoff...")
-                            await asyncio.sleep(1.5)
-                            continue  # Retry same model
-                        else:
-                            logger.warning(f"Groq ({model}) rate limit retry failed. Trying next model...")
-                            break  # Move to next model
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[Gemini] Error on attempt {attempt + 1}: {e}")
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
 
-                    # 2. Check if it's a JSON formatting requirement error
-                    if "json" in err_str or "format" in err_str or "validate" in err_str:
-                        logger.warning(f"Groq ({model}) JSON mode failed, retrying without JSON formatting constraint: {e}")
-                        try:
-                            result = await asyncio.to_thread(_sync_call, model, False)
-                            if result is not None:
-                                logger.debug(f"Groq ({model}) response without JSON format: {result[:200]}...")
-                                return result
-                        except Exception as ex:
-                            logger.warning(f"Groq ({model}) retry without JSON format also failed: {ex}")
-                            last_error = ex
-                        break  # Move to next model
+        raise LLMError(f"Gemini call failed after 2 attempts. Last error: {last_error}")
 
-                    # 3. For other exceptions, try the next model
-                    logger.warning(f"Groq ({model}) failed: {e}. Trying next model...")
-                    break
-
-        # If all models in the list failed, raise the last encountered error
-        if last_error:
-            raise last_error
-        return None
+    # ── Properties ────────────────────────────────────────────────────────────
 
     @property
     def is_configured(self) -> bool:
-        """Check if Groq is configured."""
-        return bool(self._groq_key)
+        """True if a Gemini API key is set."""
+        return bool(self._gemini_key)
 
     @property
     def available_providers(self) -> list[str]:
-        """List configured providers."""
+        """List of configured LLM providers."""
         providers = []
-        if self._groq_key:
-            providers.append("groq")
+        if self._gemini_key:
+            providers.append("gemini")
         return providers
 
 
-# Alias for backward compatibility
-DualLLMClient = GroqLLMClient
-
+# Backward-compatibility aliases
+DualLLMClient = GeminiLLMClient
