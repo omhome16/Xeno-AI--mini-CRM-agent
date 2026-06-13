@@ -94,13 +94,19 @@ class SQLGuard:
 
     def add_limit(self, sql: str, max_limit: int = MAX_LIMIT) -> str:
         """
-        Add a LIMIT clause if one doesn't already exist.
-        Wraps the query in a subquery to enforce the limit.
+        Add or override a LIMIT clause if one doesn't already exist or if it exceeds max_limit.
         """
         try:
             parsed = sqlglot.parse_one(sql, read="postgres")
-            if not parsed.find(exp.Limit):
-                # Wrap in subquery with limit
+            existing_limit = parsed.find(exp.Limit)
+            if existing_limit:
+                # Check if the existing limit exceeds the ceiling
+                limit_expr = existing_limit.find(exp.Literal)
+                if limit_expr and int(limit_expr.this) > max_limit:
+                    # Override by replacing the AST node literal directly
+                    limit_expr.replace(exp.Literal(this=str(max_limit), is_string=False))
+                    return parsed.sql(dialect="postgres")
+            else:
                 return f"SELECT * FROM ({sql.strip().rstrip(';')}) AS _q LIMIT {max_limit}"
         except Exception:
             pass  # If parsing fails here, the validate step would have caught it

@@ -11,7 +11,9 @@ Architecture:
 import logging
 from functools import partial
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+from redis.asyncio import Redis as AsyncRedis
+from app.config import get_settings
 from langgraph.graph import END, START, StateGraph
 
 from app.agent import nodes
@@ -20,9 +22,14 @@ from app.agent.state import CampaignState
 
 logger = logging.getLogger(__name__)
 
-# Module-level singleton — must persist across fresh/resume calls so that
-# conversation state survives between turns.
-_checkpointer = MemorySaver()
+_checkpointer = None
+
+def get_checkpointer() -> AsyncRedisSaver:
+    global _checkpointer
+    if _checkpointer is None:
+        settings = get_settings()
+        _checkpointer = AsyncRedisSaver(settings.REDIS_URL)
+    return _checkpointer
 
 
 def _route_after_agent(state: CampaignState) -> str:
@@ -67,4 +74,4 @@ def build_campaign_graph(llm_client: DualLLMClient) -> StateGraph:
     )
     graph.add_edge("call_tool", "agent_loop")
 
-    return graph.compile(checkpointer=_checkpointer)
+    return graph.compile(checkpointer=get_checkpointer())

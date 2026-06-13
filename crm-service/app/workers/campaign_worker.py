@@ -63,21 +63,18 @@ async def dispatch_campaign(
     # Update status to sending
     await campaign_repo.update_campaign_status(pool, cid, "sending")
 
-    # Fetch all communications for this campaign
+    # Fetch all pending communication IDs for this campaign (lightweight)
     async with pool.acquire() as conn:
-        comms = await conn.fetch(
+        comm_ids = await conn.fetch(
             """
-            SELECT c.id, c.customer_id, c.channel, c.message_content,
-                   cust.phone, cust.email, cust.whatsapp_id, cust.name
-            FROM communications c
-            JOIN customers cust ON cust.id = c.customer_id
-            WHERE c.campaign_id = $1 AND c.status = 'pending'
-            ORDER BY c.created_at
+            SELECT id FROM communications
+            WHERE campaign_id = $1 AND status = 'pending'
+            ORDER BY created_at
             """,
             cid,
         )
 
-    total = len(comms)
+    total = len(comm_ids)
     sent = 0
     failed = 0
 
@@ -93,7 +90,19 @@ async def dispatch_campaign(
     # Send in batches
     async with httpx.AsyncClient(timeout=SEND_TIMEOUT_S) as client:
         for i in range(0, total, BATCH_SIZE):
-            batch = comms[i:i + BATCH_SIZE]
+            batch_ids = [r["id"] for r in comm_ids[i:i + BATCH_SIZE]]
+            async with pool.acquire() as conn:
+                batch = await conn.fetch(
+                    """
+                    SELECT c.id, c.customer_id, c.channel, c.message_content,
+                           cust.phone, cust.email, cust.whatsapp_id, cust.name
+                    FROM communications c
+                    JOIN customers cust ON cust.id = c.customer_id
+                    WHERE c.id = ANY($1::uuid[])
+                    ORDER BY c.created_at
+                    """,
+                    batch_ids,
+                )
 
             for comm in batch:
                 try:
@@ -119,26 +128,54 @@ async def dispatch_campaign(
                             f"Channel service rejected: comm={str(comm['id'])[:8]}, "
                             f"status={response.status_code}"
                         )
+                        # Mark failed dispatch in DB (Issue 8)
+                        async with pool.acquire() as conn:
+                            await conn.execute(
+                                """
+                                UPDATE communications
+                                SET status = 'failed', failed_at = NOW(), failure_reason = $1
+                                WHERE id = $2
+                                """,
+                                f"Channel service rejected: HTTP {response.status_code}", comm["id"]
+                            )
+                            await conn.execute(
+                                "UPDATE campaigns SET total_failed = total_failed + 1 WHERE id = $1",
+                                cid
+                            )
 
                 except Exception as e:
                     failed += 1
                     logger.error(f"Failed to dispatch comm={str(comm['id'])[:8]}: {e}")
+                    # Mark failed dispatch in DB (Issue 8)
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE communications
+                            SET status = 'failed', failed_at = NOW(), failure_reason = $1
+                            WHERE id = $2
+                            """,
+                            f"Dispatch error: {str(e)[:200]}", comm["id"]
+                        )
+                        await conn.execute(
+                            "UPDATE campaigns SET total_failed = total_failed + 1 WHERE id = $1",
+                            cid
+                        )
 
-        # Progress update
-        progress = min(100, round((i + len(batch)) / total * 100))
-        if conversation_id:
-            await push_event(conversation_id, "campaign_update", {
-                "campaign_id": campaign_id,
-                "status": "dispatching",
-                "total": total,
-                "sent": sent,
-                "failed": failed,
-                "progress_pct": progress,
-            })
+            # Progress update (indented inside loop!) (Issue 1)
+            progress = min(100, round((i + len(batch)) / total * 100))
+            if conversation_id:
+                await push_event(conversation_id, "campaign_update", {
+                    "campaign_id": campaign_id,
+                    "status": "dispatching",
+                    "total": total,
+                    "sent": sent,
+                    "failed": failed,
+                    "progress_pct": progress,
+                })
 
-        # Rate limit between batches
-        if i + BATCH_SIZE < total:
-            await asyncio.sleep(BATCH_DELAY_S)
+            # Rate limit between batches (indented inside loop!) (Issue 1)
+            if i + BATCH_SIZE < total:
+                await asyncio.sleep(BATCH_DELAY_S)
 
     # Mark campaign as completed
     await campaign_repo.update_campaign_status(pool, cid, "completed")

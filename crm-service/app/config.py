@@ -37,6 +37,7 @@ class Settings(BaseSettings):
 
     # ── Service URLs ──
     CHANNEL_SERVICE_URL: str = "http://localhost:8001/api/send"
+    CHANNEL_WEBHOOK_SECRET: str = ""
     FRONTEND_URL: str = "http://localhost:5173"
 
     # ── App Settings ──

@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.agent.llm import DualLLMClient
 from app.agent.graph import build_campaign_graph
 from app.agent.state import CampaignState
-from app.sse.manager import push_event, event_stream
+from app.sse.manager import push_event, event_stream, get_or_create_queue
 from app.agent.prompts import (
     IMPROVE_MESSAGE_PROMPT,
     AUDIENCE_RECOMMENDATION_PROMPT,
@@ -380,6 +380,7 @@ async def start_chat(request: ChatRequest):
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
+    get_or_create_queue(conversation_id)
 
     llm_client = DualLLMClient(
         gemini_key=settings.GEMINI_API_KEY,
@@ -388,7 +389,7 @@ async def start_chat(request: ChatRequest):
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.",
+            detail="Gemini is not configured. Set GEMINI_API_KEY in .env.",
         )
 
     if request.mode == "oneshot":
@@ -420,6 +421,7 @@ async def plan_campaign(request: PlanRequest):
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
+    get_or_create_queue(conversation_id)
 
     brief = request.brief
     audience = brief.get("audience", "all customers")
@@ -446,7 +448,7 @@ async def plan_campaign(request: PlanRequest):
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.")
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY in .env.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -473,6 +475,7 @@ async def execute_campaign(request: ExecuteRequest):
     """
     settings = get_settings()
     conversation_id = request.conversation_id or uuid4().hex
+    get_or_create_queue(conversation_id)
 
     state: CampaignState = {
         "user_message": f"Execute campaign: {request.audience_description}",
@@ -493,7 +496,7 @@ async def execute_campaign(request: ExecuteRequest):
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.")
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY in .env.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -524,14 +527,13 @@ async def improve_message(request: ImproveMessageRequest):
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.",
+            detail="Gemini is not configured. Set GEMINI_API_KEY in .env.",
         )
 
-    prompt = (
-        IMPROVE_MESSAGE_PROMPT
-        .replace("{message_template}", request.message_template)
-        .replace("{instruction}", request.instruction)
-        .replace("{channel}", request.channel)
+    prompt = IMPROVE_MESSAGE_PROMPT.format(
+        message_template=request.message_template.replace("{", "{{").replace("}", "}}"),
+        instruction=request.instruction,
+        channel=request.channel,
     )
 
     context = (
@@ -845,7 +847,7 @@ async def recommend_strategy(request: StrategyRequest):
     settings = get_settings()
     llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="AWS Bedrock is not configured.")
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY in .env.")
         
     try:
         import json
@@ -877,9 +879,9 @@ async def recommend_message(request: MessageRecRequest):
     settings = get_settings()
     llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="AWS Bedrock is not configured.")
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Set GEMINI_API_KEY in .env.")
         
-    from app.agent.nodes import _fetch_brand_profile_ctx
+    from app.services.brand_service import fetch_brand_profile_ctx as _fetch_brand_profile_ctx
     brand_profile = await _fetch_brand_profile_ctx()
     
     try:

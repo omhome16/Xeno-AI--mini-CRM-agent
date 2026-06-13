@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # ── CRM Callback URL ──
     CRM_RECEIPT_URL: str = "http://localhost:8000/api/receipts"
+    CHANNEL_WEBHOOK_SECRET: str = ""
     REDIS_URL: str = "redis://localhost:6379"
 
     # ── App Settings ──

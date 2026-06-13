@@ -25,13 +25,13 @@ router = APIRouter(prefix="/api/campaigns", tags=["Campaigns"])
     response_model=CampaignListResponse,
     summary="List all campaigns",
 )
-async def list_campaigns():
-    """Fetch all campaigns, most recent first."""
+async def list_campaigns(limit: int = 50, offset: int = 0):
+    """Fetch campaigns, most recent first, with limit and offset."""
     pool = get_main_pool()
-    campaigns = await campaign_repo.get_campaigns(pool)
+    campaigns, total = await campaign_repo.get_campaigns(pool, limit=limit, offset=offset)
     return CampaignListResponse(
         campaigns=[CampaignResponse(**c) for c in campaigns],
-        total=len(campaigns),
+        total=total,
     )
 
 
@@ -57,9 +57,22 @@ async def get_campaign_details(campaign_id: UUID):
 
     campaign_data = CampaignResponse(**campaign)
 
-    # Calculate funnel and rates
-    total_sent = campaign_data.total_sent or 1  # Avoid division by zero
-    total_delivered = campaign_data.total_delivered or 1
+    # Calculate funnel and rates safely
+    delivery_rate = (
+        round(campaign_data.total_delivered / campaign_data.total_sent * 100, 1)
+        if campaign_data.total_sent and campaign_data.total_sent > 0
+        else 0.0
+    )
+    open_rate = (
+        round(campaign_data.total_opened / campaign_data.total_delivered * 100, 1)
+        if campaign_data.total_delivered and campaign_data.total_delivered > 0
+        else 0.0
+    )
+    click_rate = (
+        round(campaign_data.total_clicked / campaign_data.total_delivered * 100, 1)
+        if campaign_data.total_delivered and campaign_data.total_delivered > 0
+        else 0.0
+    )
 
     funnel = {
         "audience": campaign_data.total_audience,
@@ -70,11 +83,26 @@ async def get_campaign_details(campaign_id: UUID):
         "failed": campaign_data.total_failed,
     }
 
+    # Populate failure reasons from delivery_events table
+    async with pool.acquire() as conn:
+        failure_rows = await conn.fetch(
+            """
+            SELECT de.event_data->>'reason' AS reason, COUNT(*) AS count
+            FROM delivery_events de
+            JOIN communications c ON c.id = de.communication_id
+            WHERE c.campaign_id = $1 AND de.event_type = 'failed'
+            GROUP BY reason
+            ORDER BY count DESC
+            """,
+            campaign_id
+        )
+    failure_reasons = {r["reason"]: r["count"] for r in failure_rows if r["reason"]}
+
     return CampaignStatsResponse(
         campaign=campaign_data,
         funnel=funnel,
-        delivery_rate=round(campaign_data.total_delivered / total_sent * 100, 1),
-        open_rate=round(campaign_data.total_opened / total_delivered * 100, 1),
-        click_rate=round(campaign_data.total_clicked / total_delivered * 100, 1),
-        failure_reasons={},  # Will be populated from delivery_events in a future enhancement
+        delivery_rate=delivery_rate,
+        open_rate=open_rate,
+        click_rate=click_rate,
+        failure_reasons=failure_reasons,
     )

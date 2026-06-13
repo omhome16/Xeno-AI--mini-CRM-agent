@@ -48,10 +48,16 @@ async def fire_callback(
     Returns:
         True if callback was delivered successfully, False otherwise.
     """
+    from app.config import get_settings
+    settings = get_settings()
+    headers = {}
+    if settings.CHANNEL_WEBHOOK_SECRET:
+        headers["x-webhook-secret"] = settings.CHANNEL_WEBHOOK_SECRET
+
     for attempt in range(max_retries + 1):
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers=headers)
 
                 if response.status_code in (200, 201, 202):
                     return True  # Success

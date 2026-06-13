@@ -89,18 +89,19 @@ async def get_campaign(pool: asyncpg.Pool, campaign_id: UUID) -> Optional[dict]:
         return res
 
 
-async def get_campaigns(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
-    """Fetch all campaigns, most recent first."""
+async def get_campaigns(pool: asyncpg.Pool, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+    """Fetch all campaigns, most recent first, with limit and offset, and the total count."""
     async with pool.acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM campaigns")
         rows = await conn.fetch(
             """
             SELECT c.*, s.description as segment_description, s.filter_criteria
             FROM campaigns c
             LEFT JOIN segments s ON c.segment_id = s.id
             ORDER BY c.created_at DESC
-            LIMIT $1
+            LIMIT $1 OFFSET $2
             """,
-            limit
+            limit, offset
         )
     result = []
     import json
@@ -112,7 +113,7 @@ async def get_campaigns(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
             except Exception:
                 pass
         result.append(res)
-    return result
+    return result, total
 
 
 async def update_campaign_status(

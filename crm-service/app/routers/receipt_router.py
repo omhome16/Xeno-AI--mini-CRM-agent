@@ -16,8 +16,9 @@ Design:
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 
+from app.config import get_settings
 from app.database import get_main_pool
 from app.models.campaign import DeliveryReceiptRequest, DeliveryReceiptResponse
 from app.repositories import campaign_repo
@@ -39,7 +40,10 @@ router = APIRouter(prefix="/api/receipts", tags=["Receipts"])
         "Status transitions are forward-only (sent→delivered→opened→clicked→converted)."
     ),
 )
-async def process_receipt(receipt: DeliveryReceiptRequest):
+async def process_receipt(
+    receipt: DeliveryReceiptRequest,
+    x_webhook_secret: str = Header(default=""),
+):
     """
     Process a delivery event callback.
 
@@ -47,6 +51,10 @@ async def process_receipt(receipt: DeliveryReceiptRequest):
     Pushes callback details to `crm_receipt_queue` and returns immediately.
     A background worker pops events and batch-updates the DB.
     """
+    settings = get_settings()
+    if settings.CHANNEL_WEBHOOK_SECRET and x_webhook_secret != settings.CHANNEL_WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
     try:
         UUID(receipt.communication_id)
     except ValueError:
@@ -54,7 +62,7 @@ async def process_receipt(receipt: DeliveryReceiptRequest):
 
     # Push to Redis receipt queue
     from app.services.redis_queue import push_to_queue
-    payload = receipt.dict()
+    payload = receipt.model_dump()
     push_to_queue("crm_receipt_queue", payload)
 
     return DeliveryReceiptResponse(status="queued")

@@ -273,7 +273,6 @@ Examples:
 #    Revises an existing message template based on a marketer instruction.
 #    Uses .format() — placeholders: {message_template}, {instruction}, {channel}
 # ═══════════════════════════════════════════════════════════════════════════════
-
 IMPROVE_MESSAGE_PROMPT = """\
 You are a marketing copywriter. Improve the given message template based on the
 marketer's instruction, preserving all existing placeholders.
@@ -286,7 +285,7 @@ Channel constraints:
   - RCS: Rich feel, max 500 chars, no emojis
 
 ## Rules
-1. PRESERVE all placeholders exactly: {{name}}, {{city}}, etc. Never remove or rename them.
+1. PRESERVE all placeholders exactly: {{{{name}}}}, {{{{city}}}}, etc. Never remove or rename them.
 2. No emojis under any circumstances.
 3. Return ONLY the improved message text. No explanations, no markdown, no labels.
 4. Stay within the channel's character limit.
@@ -297,10 +296,7 @@ Channel constraints:
 
 ## Marketer Instruction
 {instruction}
-"""
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
+"""# ═══════════════════════════════════════════════════════════════════════════════
 # 7. WIZARD RECOMMENDATION & COPILOT PROMPTS
 #    Used by the new structured campaign wizard and floating copilot chat.
 # ═══════════════════════════════════════════════════════════════════════════════

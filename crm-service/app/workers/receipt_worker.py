@@ -141,30 +141,22 @@ async def start_receipt_worker():
                                                 if p.get("name", "").lower() == prod.lower():
                                                     matched_product = p
                                                     break
-                                        if not matched_product and revenue > 0:
-                                            # Match by closest price
-                                            target_price = revenue / max(items_count, 1)
-                                            closest_diff = None
-                                            for p in brand_catalog:
-                                                try:
-                                                    price = float(p.get("price") or 0)
-                                                    diff = abs(price - target_price)
-                                                    if closest_diff is None or diff < closest_diff:
-                                                        closest_diff = diff
-                                                        matched_product = p
-                                                except:
-                                                    pass
-                                        if not matched_product:
-                                            matched_product = brand_catalog[0]
                                         
+                                        # If no match is found (e.g. simulator random product), pick one deterministically using hash of comm_id
+                                        if not matched_product:
+                                            import hashlib
+                                            hash_idx = int(hashlib.md5(str(comm_id).encode()).hexdigest(), 16) % len(brand_catalog)
+                                            matched_product = brand_catalog[hash_idx]
+
                                         if matched_product:
                                             prod = matched_product.get("name", prod)
                                             cat = matched_product.get("category", cat)
-                                            if revenue == 0.0:
-                                                try:
-                                                    revenue = float(matched_product.get("price", 0)) * items_count
-                                                except:
-                                                    pass
+                                            # Enforce catalog price-based revenue calculation
+                                            try:
+                                                price = float(matched_product.get("price", 0))
+                                                revenue = price * items_count
+                                            except:
+                                                revenue = float(matched_product.get("price", 0)) if "price" in matched_product else 0.0
 
                                     if not prod:
                                         prod = "Campaign Product"
@@ -210,19 +202,27 @@ async def start_receipt_worker():
                                         revenue, customer_id
                                     )
                                 else:
-                                    timestamp_field = f"{event_type}_at"
-                                    await conn.execute(
-                                        f"UPDATE communications SET status = $1, {timestamp_field} = NOW() WHERE id = $2",
-                                        event_type, comm_id
-                                    )
-
-                                    counter_map = {
+                                    TIMESTAMP_FIELDS = {
+                                        "sent": "sent_at",
+                                        "delivered": "delivered_at",
+                                        "opened": "opened_at",
+                                        "clicked": "clicked_at",
+                                    }
+                                    COUNTER_FIELDS = {
                                         "sent": "total_sent",
                                         "delivered": "total_delivered",
                                         "opened": "total_opened",
                                         "clicked": "total_clicked",
                                     }
-                                    counter_field = counter_map.get(event_type)
+
+                                    timestamp_field = TIMESTAMP_FIELDS.get(event_type)
+                                    counter_field = COUNTER_FIELDS.get(event_type)
+
+                                    if timestamp_field:
+                                        await conn.execute(
+                                            f"UPDATE communications SET status = $1, {timestamp_field} = NOW() WHERE id = $2",
+                                            event_type, comm_id
+                                        )
                                     if counter_field:
                                         await conn.execute(
                                             f"UPDATE campaigns SET {counter_field} = {counter_field} + 1 WHERE id = $1",
