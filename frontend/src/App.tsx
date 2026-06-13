@@ -130,7 +130,7 @@ export default function App() {
             <ChatPage isActive={activePage === 'chat'} />
           </div>
           <div style={{ display: activePage === 'dashboard' ? 'contents' : 'none' }}>
-            <DashboardPage />
+            <DashboardPage isActive={activePage === 'dashboard'} />
           </div>
           <div style={{ display: activePage === 'brand' ? 'contents' : 'none' }}>
             <BrandProfilePage />

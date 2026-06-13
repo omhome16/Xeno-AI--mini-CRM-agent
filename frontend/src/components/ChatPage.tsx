@@ -508,7 +508,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             const updated = [...prev];
             const lowerLabel = stepLabel.toLowerCase();
 
-            if (lowerLabel.includes('sql') || lowerLabel.includes('found') || lowerLabel.includes('segment') || lowerLabel.includes('audience')) {
+            if (lowerLabel.includes('sql') || lowerLabel.includes('found') || lowerLabel.includes('segment') || lowerLabel.includes('audience') || lowerLabel.includes('query')) {
               if (isComplete) {
                 updated[0] = { ...updated[0], status: 'done', message: 'Audience segment created.' };
                 updated[1] = { ...updated[1], status: 'running', message: 'Generating copy...' };

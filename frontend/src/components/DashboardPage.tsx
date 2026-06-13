@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react';
 import { BarChart3, Users, ShoppingCart, TrendingUp, Send, Eye, MousePointerClick } from 'lucide-react';
 import { fetchCustomerStats, fetchCampaigns, type CustomerStats, type Campaign } from '../api';
 
-export default function DashboardPage() {
+export default function DashboardPage({ isActive = true }: { isActive?: boolean }) {
   const [stats, setStats] = useState<CustomerStats | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedCampaignId, setExpandedCampaignId] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadData() {
+    async function loadData(showLoading = true) {
+      if (showLoading) setLoading(true);
       try {
         const [s, c] = await Promise.all([
           fetchCustomerStats(),
@@ -20,11 +21,20 @@ export default function DashboardPage() {
       } catch (err) {
         console.error('Failed to load dashboard:', err);
       } finally {
-        setLoading(false);
+        if (showLoading) setLoading(false);
       }
     }
-    loadData();
-  }, []);
+
+    if (isActive) {
+      loadData(true);
+
+      const interval = setInterval(() => {
+        loadData(false);
+      }, 4000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isActive]);
 
   const toggleCampaign = (id: string) => {
     setExpandedCampaignId(prev => prev === id ? null : id);

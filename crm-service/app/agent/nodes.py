@@ -41,37 +41,45 @@ def is_closing_quote(s: str, i: int, n: int) -> bool:
     if char in ('}', ']'):
         return True
     if char == ',':
-        # Verify if comma is followed by another key (string + colon) or block end
+        # Verify if comma is followed by a valid JSON element or block end
         j += 1
         while j < n and s[j] in (' ', '\t', '\n', '\r'):
             j += 1
         if j >= n:
             return True
-        if s[j] == '}':
-            return True
+        if s[j] in ('}', ']'):
+            return True  # Trailing comma
         if s[j] == '"':
-            # Find closing quote of the next key, and verify if it's followed by a colon ':'
+            # Find closing quote of the next key/string and check its boundary
             k = j + 1
             escaped = False
             while k < n:
                 if s[k] == '\\':
                     escaped = not escaped
                 elif s[k] == '"' and not escaped:
-                    # Found closing quote, check if followed by colon
                     k += 1
                     while k < n and s[k] in (' ', '\t', '\n', '\r'):
                         k += 1
-                    if k < n and s[k] == ':':
+                    if k < n and s[k] in (':', ',', ']', '}'):
                         return True
                     break
                 else:
                     escaped = False
                 k += 1
             return False
-        if s[j] == '{':
+        if s[j] in ('{', '['):
             return True
-        return False
-    return False
+        # If it's a number or boolean or null (starts with digit, -, t, f, n)
+        if s[j] in ('-', 't', 'f', 'n') or s[j].isdigit():
+            # Check that it is followed by a separator
+            k = j
+            while k < n and (s[k].isalnum() or s[k] in ('.', '-')):
+                k += 1
+            while k < n and s[k] in (' ', '\t', '\n', '\r'):
+                k += 1
+            if k < n and s[k] in (',', ']', '}'):
+                return True
+            return False
 
 
 def repair_json_string(s: str) -> str:

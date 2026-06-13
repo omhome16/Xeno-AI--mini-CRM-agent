@@ -330,8 +330,15 @@ async def _process_graph_event(conversation_id: str, event: dict) -> None:
     for node_name, node_output in event.items():
         # Normal node completion
         logger.info(f"[_process_graph_event] Node '{node_name}' completed.")
+        
+        step_name = node_name
+        if node_name == "call_tool" and isinstance(node_output, dict):
+            step_name = node_output.get("current_step", node_name)
+        elif node_name == "setup_campaign_state":
+            step_name = "setup_state"
+
         await push_event(conversation_id, "step_complete", {
-            "step": node_name,
+            "step": step_name,
             "data": _serialize_state(node_output) if isinstance(node_output, dict) else str(node_output),
         })
 
