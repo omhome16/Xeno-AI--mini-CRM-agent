@@ -116,6 +116,12 @@ async def lifespan(app: FastAPI):
             )
         logger.info("✓ Synchronized customer tags (lapsed, vip, high_value) with order history")
 
+        # 4.6. Setup state checkpointer indices (RediSearch)
+        from app.agent.graph import get_checkpointer
+        checkpointer = get_checkpointer()
+        await checkpointer.asetup()
+        logger.info("✓ State checkpointer indices initialized")
+
         # 5. Start background workers
         import asyncio
         from app.workers.dispatch_worker import start_dispatch_worker

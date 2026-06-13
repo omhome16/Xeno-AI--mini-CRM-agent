@@ -24,122 +24,62 @@ MAX_TOOL_CALLS = 50
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def is_closing_quote(s: str, i: int, n: int) -> bool:
-    """
-    Look ahead from position i + 1 to see if a double quote acts as a closing quote.
-    A closing quote in JSON is followed by :, }, ], or , (with optional whitespace).
-    """
-    j = i + 1
-    while j < n and s[j] in (' ', '\t', '\n', '\r'):
-        j += 1
-    if j >= n:
-        return True # EOF is a valid boundary
-
-    char = s[j]
-    if char == ':':
-        return True
-    if char in ('}', ']'):
-        return True
-    if char == ',':
-        # Verify if comma is followed by a valid JSON element or block end
-        j += 1
-        while j < n and s[j] in (' ', '\t', '\n', '\r'):
-            j += 1
-        if j >= n:
-            return True
-        if s[j] in ('}', ']'):
-            return True  # Trailing comma
-        if s[j] == '"':
-            # Find closing quote of the next key/string and check its boundary
-            k = j + 1
-            escaped = False
-            while k < n:
-                if s[k] == '\\':
-                    escaped = not escaped
-                elif s[k] == '"' and not escaped:
-                    k += 1
-                    while k < n and s[k] in (' ', '\t', '\n', '\r'):
-                        k += 1
-                    if k < n and s[k] in (':', ',', ']', '}'):
-                        return True
-                    break
-                else:
-                    escaped = False
-                k += 1
-            return False
-        if s[j] in ('{', '['):
-            return True
-        # If it's a number or boolean or null (starts with digit, -, t, f, n)
-        if s[j] in ('-', 't', 'f', 'n') or s[j].isdigit():
-            # Check that it is followed by a separator
-            k = j
-            while k < n and (s[k].isalnum() or s[k] in ('.', '-')):
-                k += 1
-            while k < n and s[k] in (' ', '\t', '\n', '\r'):
-                k += 1
-            if k < n and s[k] in (',', ']', '}'):
-                return True
-            return False
-
-
-def repair_json_string(s: str) -> str:
+def repair_json_string(text: str) -> str:
     """
     Repair common LLM JSON syntax issues:
-    - Escapes unescaped double quotes inside string values.
-    - Replaces literal newlines/carriage returns inside string values with \\n and \\r.
+    - Escapes unescaped double quotes inside string values of known keys.
+    - Replaces literal newlines/carriage returns inside string values of known keys with \\n and \\r.
     """
-    result = []
-    in_string = False
-    escape = False
-    i = 0
-    n = len(s)
-
-    while i < n:
-        char = s[i]
-
-        if char == '\\':
-            escape = not escape
-            result.append(char)
-            i += 1
+    known_keys = [
+        "name", "reason", "think_pad", "response", "reply", "content", "goal", 
+        "channel", "type", "prompt", "description", "audience_desc", "offer", 
+        "audience_description", "message_description", "offer_details", "message_template",
+        "filters", "cities", "tags", "min_spent", "min_orders", "tool_to_call", "tool_args",
+        "suggestions", "brief_updates", "ready_to_plan", "trigger_launch", "extracted_brief", "missing_fields"
+    ]
+    
+    for key in known_keys:
+        pattern = r'"' + re.escape(key) + r'"\s*:\s*"'
+        matches = list(re.finditer(pattern, text))
+        if not matches:
             continue
-
-        if char == '"':
-            if escape:
-                result.append(char)
-                escape = False
-                i += 1
-                continue
-
-            if not in_string:
-                in_string = True
-                result.append(char)
-            else:
-                if is_closing_quote(s, i, n):
-                    in_string = False
-                    result.append(char)
-                else:
-                    # Escape the quote
-                    result.append('\\"')
-            escape = False
-            i += 1
-            continue
-
-        escape = False
-        if char == '\n':
-            if in_string:
-                result.append('\\n')
-            else:
-                result.append(char)
-        elif char == '\r':
-            if in_string:
-                result.append('\\r')
-            else:
-                result.append(char)
-        else:
-            result.append(char)
-        i += 1
-
-    return "".join(result)
+            
+        for match in reversed(matches):
+            start_idx = match.end()
+            j = start_idx
+            n = len(text)
+            found_end = -1
+            
+            while j < n:
+                if text[j] == '"':
+                    k = j + 1
+                    while k < n and text[k] in (' ', '\t', '\n', '\r'):
+                        k += 1
+                    if k >= n:
+                        found_end = j
+                        break
+                    
+                    next_char = text[k]
+                    if next_char in ('}', ']'):
+                        found_end = j
+                        break
+                    elif next_char == ',':
+                        k2 = k + 1
+                        while k2 < n and text[k2] in (' ', '\t', '\n', '\r'):
+                            k2 += 1
+                        if k2 < n and (text[k2] == '"' or text[k2] in ('}', ']')):
+                            found_end = j
+                            break
+                j += 1
+                
+            if found_end != -1:
+                val = text[start_idx:found_end]
+                escaped_val = val.replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+                text = text[:start_idx] + escaped_val + text[found_end:]
+                
+    # Strip trailing commas inside arrays/objects
+    text = re.sub(r',([ \t\r\n]*[}\]])', r'\1', text)
+    return text
 
 
 def _parse_json_response(text: str) -> Any:
@@ -172,7 +112,6 @@ def _parse_json_response(text: str) -> Any:
     # Layer 2: Try repairing and parsing
     try:
         repaired = repair_json_string(text)
-        repaired = re.sub(r",\s*([\]}])", r"\1", repaired)
         return json.loads(repaired)
     except json.JSONDecodeError:
         pass
@@ -200,7 +139,6 @@ def _parse_json_response(text: str) -> Any:
 
         try:
             repaired_extracted = repair_json_string(extracted)
-            repaired_extracted = re.sub(r",\s*([\]}])", r"\1", repaired_extracted)
             return json.loads(repaired_extracted)
         except json.JSONDecodeError:
             pass
