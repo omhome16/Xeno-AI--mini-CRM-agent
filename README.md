@@ -154,6 +154,58 @@ sequenceDiagram
 
 ---
 
+## ⚡ Core Workflows: Multi-Step Studio vs. Single-Prompt Creator
+
+The platform supports two distinct design paradigms for campaign generation, tailoring the experience to the marketer's level of control and speed:
+
+### 1. 🔄 Multi-Step Conversational Studio (Brainstorm → Plan → Execute)
+This workflow is designed for marketers who want to co-pilot campaign details interactively, verifying segment attributes and message phrasing step-by-step.
+
+```
+ [ Brainstorm Chat ] ──► [ SQL Size Verification ] ──► [ Plan Dashboard ] ──► [ Approval & Launch ]
+```
+
+* **Phase 1: Brainstorm & Parameters Ingestion**
+  The user enters the Campaign Studio chat. The AI Copilot uses the `COPILOT_INTENT_PROMPT` to analyze user inputs turn-by-turn. It extracts parameter fields (such as target city, tags like `'vip'`, minimal purchase order limits, specific channels, and promotional goals) and auto-saves them into a structured form layout.
+* **Phase 2: Live Segment Calculation**
+  As criteria are locked down, the agent calls the `query_customers_db` tool. The natural language parameters are compiled into SQL, checked by `SQLGuard` for safety, and executed on the read-only DB pool to display resulting audience counts dynamically to the marketer.
+* **Phase 3: Plan Generation (`mode="plan"`)**
+  When the essential brief parameters (Goal, Audience, Channel) are populated, the user clicks **Generate Campaign Plan**. The LangGraph agent executes nodes in `plan` mode. It compiles the SQL, registers the segment, drafts the target copy template with placeholders (`{{name}}`, `{{city}}`) using the brand profile styling rules, and displays a complete dashboard review. Crucially, a custom subgraph edge `_route_after_draft` terminates the graph without persisting a campaign database row—ensuring that planning drafts never commit duplicate campaign records or database errors.
+* **Phase 4: Launch & Asynchronous Execution (`mode="execute"`)**
+  The user can review, edit the message template, or run suggestions (Casual vs. Urgent vs. Formal styles). Once approved, the user clicks **Launch Campaign**. The graph runs in `execute` mode, creates the campaign database row (status `sending`), inserts the customer communications table records, and pushes a task to the Redis queue, immediately returning a success response while the background thread handles dispatching.
+
+---
+
+### 2. ⚡ Single-Prompt Autonomous Campaign Creator (One-Shot Mode)
+For rapid, hands-off operation, the platform provides an autonomous interface. Rather than running a conversational wizard, a user specifies the entire campaign in a single natural language instruction:
+
+> **Example Single Prompt**: *"Send an SMS welcome campaign to all customers in Delhi with a 15% discount on our Organic Cotton Crewneck using the code ECO15."*
+
+```
+ [ User One-Shot Prompt ] ──► [ Metadata Ingestion ] ──► [ Parameters Resolved? ]
+                                                                   │
+                                           ┌───────────────────────┴───────────────────────┐
+                                      YES (Trigger Launch)                            NO (Clarification Chat)
+                                           │                                               │
+                                           ▼                                               ▼
+                              [ Run Graph: Compile & Execute ]                   [ Prompt user for missing fields ]
+```
+
+* **Step 1: Database Metadata Ingestion**
+  On invoking One-Shot Mode, the CRM fetches current database metadata—specifically active customer cities and existing tags in the PostgreSQL table—and feeds them directly into the `ONESHOT_COPILOT_PROMPT` as contextual data. This allows the model to match user inputs against real database states (e.g. spelling normalization: "delhi NCR" -> "Delhi").
+* **Step 2: Unified Parameter Parsing**
+  The LLM acts as an extraction parser. It analyzes the single prompt and maps it directly into the 4 required campaign pillars:
+  1. `audience_description` (e.g. "customers in Delhi")
+  2. `channel` (e.g. "sms")
+  3. `offer_details` (e.g. "15% discount on Organic Cotton Crewneck")
+  4. `message_description` (e.g. "Welcome campaign with discount code ECO15")
+* **Step 3: Missing Fields Inspection**
+  If any parameters are missing (e.g. if the user forgot the channel or offer details), the system suspends launch, sets `trigger_launch = false`, and returns a clarifying chat prompt listing the missing attributes (e.g. *"I've parsed the audience in Delhi and welcome offer, but which channel would you like to run this on?"*).
+* **Step 4: Autonomous Compilation & Launch**
+  Once all required parameters are resolved, the system sets `trigger_launch = true`, returns a confirmation reply, and launches the execution pipeline in the background. It generates the SQL query, registers the segment, creates the database campaign, writes the communications, and fires the Redis dispatch queue worker automatically. The user is taken directly to the live campaign stream dashboard.
+
+---
+
 ## 🧠 LangGraph Orchestration & Agent Workflow
 
 The campaign strategist brain is modeled as a stateful graph using **LangGraph**, enabling structured steps, tool execution, and contextual fallbacks.
