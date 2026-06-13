@@ -248,6 +248,83 @@ async def _run_copilot(
         })
 
 
+async def _run_oneshot_copilot(
+    conversation_id: str,
+    message: str,
+    history: list[dict],
+    brief: dict,
+    llm_client: DualLLMClient,
+) -> None:
+    """
+    Run the AI copilot in one-shot mode to extract campaign parameters, check for missing fields,
+    and trigger campaign execution when ready.
+    """
+    try:
+        logger.info(f"[_run_oneshot_copilot] Starting oneshot copilot for conversation_id={conversation_id}")
+        await push_event(conversation_id, "step_start", {
+            "step": "Copilot",
+            "message": "AI Copilot is analyzing campaign parameters...",
+        })
+
+        # Fetch available metadata context (distinct cities and tags) to pass to the LLM
+        pool = get_main_pool()
+        try:
+            async with pool.acquire() as conn:
+                city_rows = await conn.fetch("SELECT distinct city FROM customers WHERE city IS NOT NULL AND city != ''")
+                tag_rows = await conn.fetch("SELECT distinct unnest(tags) as tag FROM customers")
+            cities = [r["city"] for r in city_rows]
+            tags = [r["tag"] for r in tag_rows]
+            metadata_ctx = f"Available Cities: {cities}\nAvailable Tags: {tags}"
+        except Exception as meta_err:
+            logger.warning(f"Failed to fetch metadata for oneshot copilot context: {meta_err}")
+            metadata_ctx = "Available Cities: ['Delhi', 'Bangalore', 'Mumbai']\nAvailable Tags: ['lapsed', 'vip', 'high_value', 'active']"
+
+        # Build history context
+        history_parts = []
+        for msg in history[-6:]:
+            role = msg.get("role") or "user"
+            content = msg.get("content", "").strip()
+            if content:
+                history_parts.append(f"{role}: {content}")
+        history_ctx = "\n".join(history_parts)
+
+        user_input = ""
+        if history_ctx:
+            user_input += f"Conversation history:\n{history_ctx}\n\n"
+        user_input += f"User message: {message}"
+
+        from app.agent.prompts import ONESHOT_COPILOT_PROMPT
+        system_prompt = ONESHOT_COPILOT_PROMPT.format(
+            metadata=metadata_ctx,
+            current_fields=json.dumps(brief, indent=2)
+        )
+
+        raw = await llm_client.reason(system_prompt=system_prompt, user_input=user_input)
+        from app.agent.nodes import _parse_json_response
+        parsed = _parse_json_response(raw)
+
+        reply = parsed.get("reply") or "Processing."
+        extracted_brief = parsed.get("extracted_brief") or {}
+        missing_fields = parsed.get("missing_fields") or []
+        trigger_launch = bool(parsed.get("trigger_launch", False))
+
+        await push_event(conversation_id, "result", {
+            "step": "complete",
+            "state": {
+                "ai_response": reply,
+                "field_updates": extracted_brief,
+                "missing_fields": missing_fields,
+                "trigger_launch": trigger_launch,
+                "suggestions": []
+            }
+        })
+    except Exception as e:
+        logger.error(f"[_run_oneshot_copilot] Oneshot copilot error: {e}", exc_info=True)
+        await push_event(conversation_id, "error", {
+            "message": f"Copilot error: {str(e)[:300]}",
+        })
+
+
 async def _process_graph_event(conversation_id: str, event: dict) -> None:
     """Process a single graph stream event and push to SSE."""
     for node_name, node_output in event.items():
@@ -304,13 +381,19 @@ async def start_chat(request: ChatRequest):
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.",
+            detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.",
         )
 
-    asyncio.create_task(
-        _run_copilot(conversation_id, request.message, request.history, request.brief, llm_client),
-        name=f"copilot-{conversation_id[:8]}",
-    )
+    if request.mode == "oneshot":
+        asyncio.create_task(
+            _run_oneshot_copilot(conversation_id, request.message, request.history, request.brief, llm_client),
+            name=f"oneshot-{conversation_id[:8]}",
+        )
+    else:
+        asyncio.create_task(
+            _run_copilot(conversation_id, request.message, request.history, request.brief, llm_client),
+            name=f"copilot-{conversation_id[:8]}",
+        )
 
     return ChatResponse(
         conversation_id=conversation_id,
@@ -356,7 +439,7 @@ async def plan_campaign(request: PlanRequest):
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.")
+        raise HTTPException(status_code=503, detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -393,7 +476,7 @@ async def execute_campaign(request: ExecuteRequest):
         "message_description": request.message_description or request.brief.get("message_idea", ""),
         "channel": request.channel,
         "offer_details": request.offer_details or request.brief.get("offer", ""),
-        "message_template": request.message_template,
+        "message_template": request.message_template if request.message_template else None,
         "brief": request.brief,
         "current_step": "executing",
     }
@@ -403,7 +486,7 @@ async def execute_campaign(request: ExecuteRequest):
     )
 
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.")
+        raise HTTPException(status_code=503, detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.")
 
     asyncio.create_task(
         _run_graph(conversation_id, state, llm_client),
@@ -434,7 +517,7 @@ async def improve_message(request: ImproveMessageRequest):
     if not llm_client.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="Gemini LLM provider is not configured. Set GEMINI_API_KEY.",
+            detail="AWS Bedrock provider is not configured. Set AWS credentials in .env.",
         )
 
     prompt = (
@@ -528,67 +611,222 @@ async def recommend_audience():
             if not isinstance(recs, list):
                 raise ValueError("LLM did not return a list")
                 
+        async def fetch_segment_stats(flts):
+            conditions = []
+            params = []
+            idx = 1
+            
+            cities_list = flts.get("cities")
+            if cities_list:
+                cleaned_cities = [c for c in cities_list if str(c).strip().lower() not in {"all", "any", "none", "null", "", "any city", "all cities"}]
+                if cleaned_cities:
+                    conditions.append(f"city = ANY(${idx}::text[])")
+                    params.append(list(cleaned_cities))
+                    idx += 1
+                
+            tags_list = flts.get("tags")
+            if tags_list:
+                cleaned_tags = [t for t in tags_list if str(t).strip().lower() not in {"all", "any", "none", "null", "", "any tag", "all tags"}]
+                if cleaned_tags:
+                    conditions.append(f"tags @> ${idx}::text[]")
+                    params.append(list(cleaned_tags))
+                    idx += 1
+                
+            min_spent = flts.get("min_spent")
+            if min_spent is not None:
+                conditions.append(f"total_spent >= ${idx}")
+                params.append(float(min_spent))
+                idx += 1
+                
+            min_orders = flts.get("min_orders")
+            if min_orders is not None:
+                conditions.append(f"total_orders >= ${idx}")
+                params.append(int(min_orders))
+                idx += 1
+                
+            where_clause = " AND ".join(conditions) if conditions else "TRUE"
+            query = f"SELECT COUNT(*) as count, COALESCE(AVG(total_spent), 0) as avg_spent, COALESCE(AVG(total_orders), 0) as avg_orders FROM customers WHERE {where_clause}"
+            
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(query, *params)
+                return row["count"], float(row["avg_spent"]), float(row["avg_orders"])
+
         final_recs = []
         for rec in recs:
             filters = rec.get("filters", {})
-            real_count = 0
+            # Clean filters in-place to send clean JSON filters back to the frontend
+            if "cities" in filters and filters["cities"]:
+                cleaned_cities = [c for c in filters["cities"] if str(c).strip().lower() not in {"all", "any", "none", "null", "", "any city", "all cities"}]
+                if cleaned_cities:
+                    filters["cities"] = cleaned_cities
+                else:
+                    filters.pop("cities", None)
+            
+            if "tags" in filters and filters["tags"]:
+                cleaned_tags = [t for t in filters["tags"] if str(t).strip().lower() not in {"all", "any", "none", "null", "", "any tag", "all tags"}]
+                if cleaned_tags:
+                    filters["tags"] = cleaned_tags
+                else:
+                    filters.pop("tags", None)
+            
             try:
-                conditions = []
-                params = []
-                idx = 1
-                
-                cities_list = filters.get("cities")
-                if cities_list:
-                    conditions.append(f"city = ANY(${idx}::text[])")
-                    params.append(list(cities_list))
-                    idx += 1
-                    
-                tags_list = filters.get("tags")
-                if tags_list:
-                    conditions.append(f"tags @> ${idx}::text[]")
-                    params.append(list(tags_list))
-                    idx += 1
-                    
-                min_spent = filters.get("min_spent")
-                if min_spent is not None:
-                    conditions.append(f"total_spent >= ${idx}")
-                    params.append(float(min_spent))
-                    idx += 1
-                    
-                min_orders = filters.get("min_orders")
-                if min_orders is not None:
-                    conditions.append(f"total_orders >= ${idx}")
-                    params.append(int(min_orders))
-                    idx += 1
-                    
-                where_clause = " AND ".join(conditions) if conditions else "TRUE"
-                query = f"SELECT COUNT(*) as count, COALESCE(AVG(total_spent), 0) as avg_spent, COALESCE(AVG(total_orders), 0) as avg_orders FROM customers WHERE {where_clause}"
-                
-                async with pool.acquire() as conn:
-                    row = await conn.fetchrow(query, *params)
-                    real_count = row["count"]
-                    avg_spent = float(row["avg_spent"])
-                    avg_orders = float(row["avg_orders"])
+                real_count, avg_spent, avg_orders = await fetch_segment_stats(filters)
             except Exception as query_err:
                 logger.warning(f"Failed to query count for filter {filters}: {query_err}")
                 real_count = rec.get("count") or 0
                 avg_spent = 0.0
                 avg_orders = 0.0
-                
-            final_recs.append({
-                "name": rec.get("name", "Target Segment"),
-                "filters": filters,
-                "count": real_count,
-                "reason": rec.get("reason", ""),
-                "avg_spent": avg_spent,
-                "avg_orders": avg_orders
-            })
             
+            if real_count > 0:
+                final_recs.append({
+                    "name": rec.get("name", "Target Segment"),
+                    "filters": filters,
+                    "count": real_count,
+                    "reason": rec.get("reason", ""),
+                    "avg_spent": avg_spent,
+                    "avg_orders": avg_orders
+                })
+
+        FALLBACK_SEGMENTS = [
+            {
+                "name": "VIP Spenders",
+                "filters": {"tags": ["vip"]},
+                "reason": "High-value customers with premium brand affinity and top spending history."
+            },
+            {
+                "name": "Lapsed Customers",
+                "filters": {"tags": ["lapsed"]},
+                "reason": "Customers who haven't ordered recently but have historical engagement."
+            },
+            {
+                "name": "Active Regulars",
+                "filters": {"tags": ["regular"]},
+                "reason": "Frequent buyers who maintain steady interactions with the brand."
+            }
+        ]
+        
+        for fallback in FALLBACK_SEGMENTS:
+            if len(final_recs) >= 3:
+                break
+            # Check if this fallback is already represented (by filters or name)
+            already_exists = any(
+                fr["name"].lower() == fallback["name"].lower() or 
+                fr["filters"] == fallback["filters"] 
+                for fr in final_recs
+            )
+            if not already_exists:
+                try:
+                    real_count, avg_spent, avg_orders = await fetch_segment_stats(fallback["filters"])
+                    if real_count > 0:
+                        final_recs.append({
+                            "name": fallback["name"],
+                            "filters": fallback["filters"],
+                            "count": real_count,
+                            "reason": fallback["reason"],
+                            "avg_spent": avg_spent,
+                            "avg_orders": avg_orders
+                        })
+                except Exception as fb_err:
+                    logger.warning(f"Failed to fetch stats for fallback segment {fallback['name']}: {fb_err}")
+                    
         return final_recs
         
     except Exception as e:
         logger.error(f"Failed to get audience recommendations: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to suggest segments: {str(e)}")
+
+
+@router.post(
+    "/recommendations/campaigns",
+    response_model=list[dict],
+    summary="Get recommended campaign prompts based on database analytics and brand profile"
+)
+async def recommend_campaigns():
+    settings = get_settings()
+    llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        
+    pool = get_main_pool()
+    try:
+        async with pool.acquire() as conn:
+            # 1. Total customers
+            total = await conn.fetchval("SELECT COUNT(*) FROM customers")
+            
+            # 2. Top Cities
+            cities = await conn.fetch("SELECT city, COUNT(*) as count FROM customers WHERE city IS NOT NULL AND city != '' GROUP BY city ORDER BY count DESC LIMIT 5")
+            
+            # 3. Tags
+            tags = await conn.fetch("SELECT unnest(tags) as tag, COUNT(*) as count FROM customers GROUP BY tag ORDER BY count DESC LIMIT 10")
+            
+            # 4. Brand profile catalogs
+            brand_profile_row = await conn.fetchrow("SELECT data FROM brand_profile ORDER BY id DESC LIMIT 1")
+            brand_catalog = []
+            if brand_profile_row:
+                bp_data = brand_profile_row["data"]
+                if isinstance(bp_data, str):
+                    bp_data = json.loads(bp_data)
+                brand_catalog = bp_data.get("product_catalog", [])
+
+        stats_ctx = f"Total Customers: {total}\n"
+        stats_ctx += "Top Cities:\n"
+        for r in cities:
+            stats_ctx += f"  - {r['city']}: {r['count']}\n"
+        stats_ctx += "Tags:\n"
+        for r in tags:
+            stats_ctx += f"  - {r['tag']}: {r['count']}\n"
+        if brand_catalog:
+            stats_ctx += "Brand Products Catalogs:\n"
+            for p in brand_catalog[:5]:
+                stats_ctx += f"  - {p.get('name')} (Price: {p.get('price')}, Category: {p.get('category')})\n"
+        
+        from app.agent.prompts import CAMPAIGN_RECOMMENDATION_PROMPT
+        system_prompt = CAMPAIGN_RECOMMENDATION_PROMPT.format(stats=stats_ctx)
+        
+        raw = await llm_client.reason(
+            system_prompt=system_prompt,
+            user_input="Suggest 3 high-impact campaign prompts."
+        )
+        from app.agent.nodes import _parse_json_response
+        recs = _parse_json_response(raw)
+        
+        if not isinstance(recs, list):
+            if isinstance(recs, dict):
+                for k, v in recs.items():
+                    if isinstance(v, list):
+                        recs = v
+                        break
+            if not isinstance(recs, list):
+                raise ValueError("LLM did not return a list")
+                
+        return recs
+        
+    except Exception as e:
+        logger.error(f"Failed to get campaign recommendations: {e}", exc_info=True)
+        # Return logical fallback suggestions in case of failure so the app doesn't break
+        return [
+            {
+                "prompt": "Run a campaign for lapsed customers in Delhi offering a 20% discount using SMS",
+                "description": "Targets lapsed customers in Delhi to win them back.",
+                "channel": "sms",
+                "audience_desc": "lapsed customers in Delhi",
+                "offer": "20% discount"
+            },
+            {
+                "prompt": "Launch a campaign for VIP customers in Bangalore offering free shipping using whatsapp",
+                "description": "Rewards VIP customers in Bangalore with free shipping.",
+                "channel": "whatsapp",
+                "audience_desc": "VIP customers in Bangalore",
+                "offer": "free shipping"
+            },
+            {
+                "prompt": "Launch a campaign for high value customers in Delhi offering free shipping using whatsapp",
+                "description": "Promotes free shipping to high-value customers in Delhi.",
+                "channel": "whatsapp",
+                "audience_desc": "high value customers in Delhi",
+                "offer": "free shipping"
+            }
+        ]
 
 
 @router.post(
@@ -600,7 +838,7 @@ async def recommend_strategy(request: StrategyRequest):
     settings = get_settings()
     llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        raise HTTPException(status_code=503, detail="AWS Bedrock is not configured.")
         
     try:
         import json
@@ -632,7 +870,7 @@ async def recommend_message(request: MessageRecRequest):
     settings = get_settings()
     llm_client = DualLLMClient(gemini_key=settings.GEMINI_API_KEY)
     if not llm_client.is_configured:
-        raise HTTPException(status_code=503, detail="Gemini is not configured.")
+        raise HTTPException(status_code=503, detail="AWS Bedrock is not configured.")
         
     from app.agent.nodes import _fetch_brand_profile_ctx
     brand_profile = await _fetch_brand_profile_ctx()

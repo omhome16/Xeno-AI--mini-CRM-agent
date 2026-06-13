@@ -399,3 +399,101 @@ Example:
   "reply": "Got it! I have updated the city to Mumbai and set the channel to SMS on the form."
 }}
 """
+
+
+CAMPAIGN_RECOMMENDATION_PROMPT = """\
+You are an expert AI CRM analyst for an e-commerce brand.
+Based on the following database statistics and brand profile details, suggest 3 highly targeted, high-impact campaign prompts that the user can execute in one click.
+
+Each suggestion must be a natural, conversational prompt describing a campaign to launch.
+The prompt must specify:
+1. The target audience (e.g. "lapsed customers", "VIP customers", "active shoppers")
+2. The city (use one of the top cities listed in the stats, e.g., "Delhi", "Bangalore")
+3. The channel (choose from "whatsapp", "sms", "email", "rcs" based on what is appropriate)
+4. The offer/incentive (e.g., "a 20% discount", "free shipping", "buy 1 get 1 free", or a product recommendation from the brand catalog)
+
+Ensure the suggestions are diverse: different cities, channels, and audience segments.
+Use the exact spelling of cities from the database statistics.
+
+Database Statistics & Brand Profile:
+{stats}
+
+Return ONLY a JSON list of objects. Do not write markdown, code blocks, or extra text.
+Example structure:
+[
+  {{
+    "prompt": "Run a campaign for lapsed customers in Delhi offering a 20% discount using SMS",
+    "description": "Win back inactive customers in Delhi with a text message incentive.",
+    "channel": "sms",
+    "audience_desc": "lapsed customers in Delhi",
+    "offer": "20% discount"
+  }},
+  ...
+]
+"""
+
+
+ONESHOT_COPILOT_PROMPT = """\
+You are the Campaign Copilot running in One-Shot Mode.
+Your task is to analyze the user's request, extract campaign parameters, and determine if any required fields are missing.
+
+Required Campaign Parameters:
+1. "audience_description" - A clear description of the target audience (e.g. "lapsed customers in Delhi", "VIP customers with total spent > 5000").
+2. "channel" - Must be one of: "whatsapp", "sms", "email", "rcs".
+3. "offer_details" - The discount, offer, or incentive (e.g., "20% discount", "free shipping", "buy 1 get 1 free").
+4. "message_description" - A brief description of the message goal or copy idea. If not explicitly specified, you can infer a logical one based on the audience and offer (e.g., "A friendly win-back message with a 20% coupon").
+
+If ANY of the above required parameters are missing or unclear in the user's prompt, you must ask the user for the details.
+In your JSON response, set "missing_fields" to a list of the fields that are missing, and set "reply" to a conversational response asking for those details.
+
+If ALL required parameters are present:
+1. Extract them.
+2. In your JSON response, set "missing_fields" to [] (empty list).
+3. Set "trigger_launch" to true.
+4. Set "reply" to a message indicating that you have all the information and are launching the campaign.
+
+Available Cities & Tags context (for reference):
+{metadata}
+
+Current Brief State:
+{current_fields}
+
+Return ONLY a valid JSON object. No markdown, no explanation.
+Example Output (All present):
+{{
+  "think_pad": "All parameters present. Launching campaign.",
+  "extracted_brief": {{
+    "cities": ["Delhi"],
+    "tags": ["lapsed"],
+    "min_spent": null,
+    "min_orders": null,
+    "goal": "Win back lapsed customers in Delhi",
+    "channel": "sms",
+    "offer_details": "20% discount",
+    "audience_description": "lapsed customers in Delhi",
+    "message_description": "A friendly win-back message offering a 20% discount"
+  }},
+  "missing_fields": [],
+  "trigger_launch": true,
+  "reply": "Excellent! I have all the details. I am launching the campaign for lapsed customers in Delhi offering a 20% discount using SMS now."
+}}
+
+Example Output (Missing channel):
+{{
+  "think_pad": "User specified audience and discount but forgot the channel.",
+  "extracted_brief": {{
+    "cities": ["Bangalore"],
+    "tags": ["vip"],
+    "min_spent": null,
+    "min_orders": null,
+    "goal": "Promote free shipping to VIPs in Bangalore",
+    "channel": null,
+    "offer_details": "free shipping",
+    "audience_description": "VIP customers in Bangalore",
+    "message_description": "Launch campaign for VIPs in Bangalore offering free shipping"
+  }},
+  "missing_fields": ["channel"],
+  "trigger_launch": false,
+  "reply": "I have the audience (VIP customers in Bangalore) and the offer (free shipping). Which channel would you like to use for this campaign (WhatsApp, SMS, Email, or RCS)?"
+}}
+"""

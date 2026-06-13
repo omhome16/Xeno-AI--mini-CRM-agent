@@ -134,13 +134,25 @@ def repair_json_string(s: str) -> str:
     return "".join(result)
 
 
-def _parse_json_response(text: str) -> dict:
+def _parse_json_response(text: str) -> Any:
     """
     Parse a JSON string from an LLM, handling code fences, leading preamble,
     unescaped quotes, and unescaped newlines using a multi-layer strategy.
     """
     text = text.strip()
-    if text.startswith("```"):
+    
+    # Strip <think>...</think> block if present (common in DeepSeek R1)
+    if "<think>" in text:
+        if "</think>" in text:
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        else:
+            text = re.sub(r"<think>.*", "", text, flags=re.DOTALL).strip()
+    
+    # Clean code fences
+    code_block_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+    if code_block_match:
+        text = code_block_match.group(1).strip()
+    elif text.startswith("```"):
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
     # Layer 1: Direct JSON parse
@@ -152,22 +164,35 @@ def _parse_json_response(text: str) -> dict:
     # Layer 2: Try repairing and parsing
     try:
         repaired = repair_json_string(text)
+        repaired = re.sub(r",\s*([\]}])", r"\1", repaired)
         return json.loads(repaired)
     except json.JSONDecodeError:
         pass
 
-    # Layer 3: Extract {...} block
-    match = re.search(r"(\{.*\})", text, re.DOTALL)
-    if match:
-        extracted = match.group(1)
+    # Layer 3: Extract first valid block ({...} or [...])
+    first_brace = text.find('{')
+    first_bracket = text.find('[')
+    
+    extracted = None
+    if first_brace != -1 or first_bracket != -1:
+        if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+            match = re.search(r"(\{.*\})", text, re.DOTALL)
+            if match:
+                extracted = match.group(1)
+        else:
+            match = re.search(r"(\[.*\])", text, re.DOTALL)
+            if match:
+                extracted = match.group(1)
+                
+    if extracted:
         try:
             return json.loads(extracted)
         except json.JSONDecodeError:
             pass
 
-        # Layer 4: Try repairing the extracted {...} block
         try:
             repaired_extracted = repair_json_string(extracted)
+            repaired_extracted = re.sub(r",\s*([\]}])", r"\1", repaired_extracted)
             return json.loads(repaired_extracted)
         except json.JSONDecodeError:
             pass
@@ -353,11 +378,12 @@ async def agent_loop(state: CampaignState, llm_client: DualLLMClient) -> dict:
     })
 
     # ── LLM Call ─────────────────────────────────────────────────────────────
+    raw = None
     try:
         raw = await llm_client.reason(system_prompt, user_input)
         parsed = _parse_json_response(raw)
     except Exception as e:
-        logger.error(f"[agent_loop] LLM reasoning failed: {e}. Raw response:\n{raw}", exc_info=True)
+        logger.error(f"[agent_loop] LLM reasoning failed: {e}. Raw response: {raw}", exc_info=True)
         existing_think = state.get("think_pad") or ""
         error_think = f"Reasoning engine error: {e}"
         think_pad = f"{existing_think}\n\n{error_think}" if existing_think else error_think
@@ -570,7 +596,7 @@ async def call_tool(state: CampaignState, llm_client: DualLLMClient) -> dict:
             })
             try:
                 res = await agent_tools.execute_campaign(
-                    llm_client, seg_id, chan, template, campaign_name, aud_sql
+                    llm_client, seg_id, chan, template, campaign_name, aud_sql, conversation_id=conv_id
                 )
                 if res.get("error"):
                     last_tool_output = f"ERROR: {res['error']}"

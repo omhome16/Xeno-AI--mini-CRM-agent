@@ -36,6 +36,7 @@ async def init_db(database_url: str) -> asyncpg.Pool:
         min_size=2,
         max_size=10,
         command_timeout=30,
+        max_inactive_connection_lifetime=300.0,
     )
     logger.info("Main database pool initialized")
     return _main_pool
@@ -65,6 +66,7 @@ async def init_readonly_db(database_url: str) -> Optional[asyncpg.Pool]:
             min_size=1,
             max_size=5,
             command_timeout=5,  # Short timeout for AI queries
+            max_inactive_connection_lifetime=300.0,
         )
         logger.info("Read-only database pool initialized")
         return _readonly_pool

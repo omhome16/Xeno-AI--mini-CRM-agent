@@ -381,3 +381,18 @@ export async function fetchSegmentCount(filters: Record<string, any>): Promise<{
   if (!res.ok) throw new Error('Failed to fetch segment count');
   return res.json();
 }
+
+export async function fetchCampaignRecommendations(): Promise<{
+  prompt: string;
+  description: string;
+  channel: string;
+  audience_desc: string;
+  offer: string;
+}[]> {
+  const res = await fetch(`${API_BASE}/api/chat/recommendations/campaigns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to fetch campaign recommendations');
+  return res.json();
+}

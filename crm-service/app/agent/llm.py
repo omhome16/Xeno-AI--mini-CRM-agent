@@ -36,7 +36,7 @@ class GeminiLLMClient:
         text     = await client.generate(system_prompt, user_input)
     """
 
-    def __init__(self, gemini_key: str = ""):
+    def __init__(self, gemini_key: str = "", model_id: str = ""):
         try:
             from app.config import get_settings
             settings = get_settings()
@@ -141,4 +141,5 @@ class GeminiLLMClient:
 
 
 # Backward-compatibility aliases
+GeminiLLMClient = GeminiLLMClient
 DualLLMClient = GeminiLLMClient

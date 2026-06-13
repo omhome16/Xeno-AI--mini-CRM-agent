@@ -23,18 +23,16 @@ async def start_receipt_worker():
             if first_task:
                 tasks.append(first_task)
                 
-                # Fetch more receipts non-blocking (up to a batch of 50)
+                # Fetch more receipts non-blocking (up to a batch of 50) — single roundtrip
                 from app.services.redis_queue import get_redis_client
                 r = get_redis_client()
-                for _ in range(49):
-                    val = r.lpop("crm_receipt_queue")
-                    if val:
+                batch = r.lpop("crm_receipt_queue", count=49)
+                if batch:
+                    for val in batch:
                         try:
                             tasks.append(json.loads(val))
                         except Exception as parse_err:
                             logger.error(f"Failed to parse popped receipt JSON: {parse_err}")
-                    else:
-                        break
 
             if tasks:
                 logger.info(f"Processing batch of {len(tasks)} delivery receipts...")
@@ -122,6 +120,57 @@ async def start_receipt_worker():
                                     else:
                                         revenue = 0.0
 
+                                    items_count = int(event_data.get("items_count", 1))
+                                    cat = event_data.get("category")
+                                    prod = event_data.get("product_name")
+
+                                    # Retrieve product names and prices from the brand_profile database table
+                                    brand_profile_row = await conn.fetchrow("SELECT data FROM brand_profile ORDER BY id DESC LIMIT 1")
+                                    brand_catalog = []
+                                    if brand_profile_row:
+                                        bp_data = brand_profile_row["data"]
+                                        if isinstance(bp_data, str):
+                                            bp_data = json.loads(bp_data)
+                                        brand_catalog = bp_data.get("product_catalog", [])
+
+                                    if brand_catalog:
+                                        matched_product = None
+                                        if prod:
+                                            # Match by product name if possible
+                                            for p in brand_catalog:
+                                                if p.get("name", "").lower() == prod.lower():
+                                                    matched_product = p
+                                                    break
+                                        if not matched_product and revenue > 0:
+                                            # Match by closest price
+                                            target_price = revenue / max(items_count, 1)
+                                            closest_diff = None
+                                            for p in brand_catalog:
+                                                try:
+                                                    price = float(p.get("price") or 0)
+                                                    diff = abs(price - target_price)
+                                                    if closest_diff is None or diff < closest_diff:
+                                                        closest_diff = diff
+                                                        matched_product = p
+                                                except:
+                                                    pass
+                                        if not matched_product:
+                                            matched_product = brand_catalog[0]
+                                        
+                                        if matched_product:
+                                            prod = matched_product.get("name", prod)
+                                            cat = matched_product.get("category", cat)
+                                            if revenue == 0.0:
+                                                try:
+                                                    revenue = float(matched_product.get("price", 0)) * items_count
+                                                except:
+                                                    pass
+
+                                    if not prod:
+                                        prod = "Campaign Product"
+                                    if not cat:
+                                        cat = "Campaign Sale"
+
                                     await conn.execute(
                                         """
                                         UPDATE communications
@@ -140,11 +189,6 @@ async def start_receipt_worker():
                                         """,
                                         campaign_id, revenue
                                     )
-
-                                    # Create the attributed order
-                                    items_count = int(event_data.get("items_count", 1))
-                                    cat = event_data.get("category", "Campaign Sale")
-                                    prod = event_data.get("product_name", "Campaign Product")
 
                                     await conn.execute(
                                         """

@@ -11,6 +11,7 @@ import {
   fetchMessageRecommendations,
   fetchSegmentCount,
   fetchCampaignMetadata,
+  fetchCampaignRecommendations,
   type AudienceRecommendation,
   type StrategyRecommendation,
   type MessageRecommendation,
@@ -57,6 +58,27 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   const [selectedGoal, setSelectedGoal] = useState<string>('');
   const [selectedChannel, setSelectedChannel] = useState<string>('whatsapp');
   const [messageTemplate, setMessageTemplate] = useState<string>('');
+
+  // ── Mode selector ──
+  const [agentMode, setAgentMode] = useState<'manual' | 'oneshot' | null>(null);
+  const [campaignSuggestions, setCampaignSuggestions] = useState<{
+    prompt: string;
+    description: string;
+    channel: string;
+    audience_desc: string;
+    offer: string;
+  }[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [oneshotMessages, setOneshotMessages] = useState<CopilotMessage[]>([
+    {
+      id: 'oneshot-welcome',
+      role: 'assistant',
+      content: "Welcome to One-Shot Campaign Studio! Tell me what campaign you want to run, or select one of the data-driven suggestions below, and I'll build and execute it end-to-end for you."
+    }
+  ]);
+  const [oneshotInput, setOneshotInput] = useState('');
+  const [loadingOneshot, setLoadingOneshot] = useState(false);
+  const oneshotEndRef = useRef<HTMLDivElement>(null);
 
   // ── Database-Driven Metadata State ──
   const [availableCities, setAvailableCities] = useState<{ city: string; count: number }[]>([]);
@@ -149,6 +171,30 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     };
     loadAudienceRecs();
   }, []);
+
+  // Scroll oneshot messages to bottom
+  useEffect(() => {
+    oneshotEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [oneshotMessages]);
+
+  // Load campaign suggestions when oneshot mode is activated
+  const loadCampaignSuggestions = async () => {
+    setLoadingSuggestions(true);
+    try {
+      const recs = await fetchCampaignRecommendations();
+      setCampaignSuggestions(recs);
+    } catch (err) {
+      console.error('Failed to load campaign suggestions', err);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  useEffect(() => {
+    if (agentMode === 'oneshot') {
+      loadCampaignSuggestions();
+    }
+  }, [agentMode]);
 
   // Step 2: Load strategy recommendation on transition or filters change
   useEffect(() => {
@@ -515,6 +561,128 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     }
   };
 
+  // One-Shot Mode Suggestion selection
+  const handleSelectSuggestion = async (s: { prompt: string; channel: string; audience_desc: string; offer: string }) => {
+    setOneshotInput('');
+    setOneshotMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: s.prompt }]);
+    setLoadingOneshot(true);
+
+    try {
+      // Pre-set some state
+      setSelectedChannel(s.channel);
+      setSelectedGoal(`Campaign for ${s.audience_desc}`);
+      
+      const history = oneshotMessages
+        .filter(m => m.id !== 'oneshot-welcome')
+        .map(m => ({ role: m.role, content: m.content }));
+
+      const { conversation_id } = await startChat(s.prompt, 'oneshot', history, {}, conversationId || undefined);
+      setConversationId(conversation_id);
+
+      connectSSE(conversation_id, (event) => {
+        if (event.type === 'result') {
+          const state = event.data?.state || {};
+          const reply = state.ai_response || 'Launching your campaign...';
+          setOneshotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: reply }]);
+          setLoadingOneshot(false);
+
+          if (state.trigger_launch) {
+            const updates = state.field_updates || {};
+            handleLaunchCampaign({
+              cities: updates.cities,
+              tags: updates.tags,
+              minSpent: updates.min_spent !== undefined ? (updates.min_spent !== null ? String(updates.min_spent) : '') : undefined,
+              maxSpent: updates.max_spent !== undefined ? (updates.max_spent !== null ? String(updates.max_spent) : '') : undefined,
+              minOrders: updates.min_orders !== undefined ? (updates.min_orders !== null ? String(updates.min_orders) : '') : undefined,
+              maxOrders: updates.max_orders !== undefined ? (updates.max_orders !== null ? String(updates.max_orders) : '') : undefined,
+              goal: updates.goal || `Campaign for ${s.audience_desc}`,
+              channel: updates.channel || s.channel,
+              messageTemplate: undefined
+            });
+          }
+        } else if (event.type === 'error') {
+          const errMsg = event.data?.message || 'Error executing one-shot prompt.';
+          setOneshotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: `Error: ${errMsg}` }]);
+          setLoadingOneshot(false);
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      setLoadingOneshot(false);
+    }
+  };
+
+  // One-Shot Chat Message Send
+  const handleSendOneshotChat = async () => {
+    const text = oneshotInput.trim();
+    if (!text || loadingOneshot) return;
+
+    setOneshotInput('');
+    setOneshotMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }]);
+    setLoadingOneshot(true);
+
+    try {
+      const history = oneshotMessages
+        .filter(m => m.id !== 'oneshot-welcome')
+        .map(m => ({ role: m.role, content: m.content }));
+
+      const brief = {
+        cities: selectedCities,
+        tags: selectedTags,
+        min_spent: minSpent === '' ? null : Number(minSpent),
+        max_spent: maxSpent === '' ? null : Number(maxSpent),
+        min_orders: minOrders === '' ? null : Number(minOrders),
+        max_orders: maxOrders === '' ? null : Number(maxOrders),
+        goal: selectedGoal,
+        channel: selectedChannel
+      };
+
+      const { conversation_id } = await startChat(text, 'oneshot', history, brief, conversationId || undefined);
+      setConversationId(conversation_id);
+
+      connectSSE(conversation_id, (event) => {
+        if (event.type === 'result') {
+          const state = event.data?.state || {};
+          const reply = state.ai_response || 'Processing...';
+          setOneshotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: reply }]);
+
+          const updates = state.field_updates || {};
+          if (updates.cities) setSelectedCities(updates.cities);
+          if (updates.tags) setSelectedTags(updates.tags);
+          if (updates.min_spent !== undefined) setMinSpent(updates.min_spent !== null ? String(updates.min_spent) : '');
+          if (updates.max_spent !== undefined) setMaxSpent(updates.max_spent !== null ? String(updates.max_spent) : '');
+          if (updates.min_orders !== undefined) setMinOrders(updates.min_orders !== null ? String(updates.min_orders) : '');
+          if (updates.max_orders !== undefined) setMaxOrders(updates.max_orders !== null ? String(updates.max_orders) : '');
+          if (updates.goal) setSelectedGoal(updates.goal);
+          if (updates.channel) setSelectedChannel(updates.channel);
+
+          setLoadingOneshot(false);
+
+          if (state.trigger_launch) {
+            handleLaunchCampaign({
+              cities: updates.cities,
+              tags: updates.tags,
+              minSpent: updates.min_spent !== undefined ? (updates.min_spent !== null ? String(updates.min_spent) : '') : undefined,
+              maxSpent: updates.max_spent !== undefined ? (updates.max_spent !== null ? String(updates.max_spent) : '') : undefined,
+              minOrders: updates.min_orders !== undefined ? (updates.min_orders !== null ? String(updates.min_orders) : '') : undefined,
+              maxOrders: updates.max_orders !== undefined ? (updates.max_orders !== null ? String(updates.max_orders) : '') : undefined,
+              goal: updates.goal,
+              channel: updates.channel,
+              messageTemplate: undefined
+            });
+          }
+        } else if (event.type === 'error') {
+          const errMsg = event.data?.message || 'Error processing request.';
+          setOneshotMessages(prev => [...prev, { id: `copilot-${Date.now()}`, role: 'assistant', content: `Error: ${errMsg}` }]);
+          setLoadingOneshot(false);
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      setLoadingOneshot(false);
+    }
+  };
+
   // Copilot Message Send
   const handleSendCopilot = async () => {
     const text = copilotInput.trim();
@@ -796,7 +964,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   ) : null;
 
   return (
-    <div className="campaign-studio" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="campaign-studio" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
       {/* Dynamic CSS Inject */}
       <style>{`
         .wizard-graph-flow {
@@ -1375,45 +1543,424 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           from { transform: translateY(20px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }
         }
+
+        /* Mode selection overlay styles */
+        .mode-selection-overlay {
+          position: absolute;
+          inset: 0;
+          background: rgba(255, 255, 255, 0.05);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          z-index: 1200;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          animation: fadeIn 0.4s ease;
+          border-radius: 28px;
+        }
+        .mode-card-container {
+          background: rgba(255, 255, 255, 0.85);
+          backdrop-filter: blur(30px);
+          -webkit-backdrop-filter: blur(30px);
+          border: 1px solid var(--glass-border);
+          border-radius: 24px;
+          padding: 2.5rem;
+          width: 90%;
+          max-width: 800px;
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          gap: 1.5rem;
+          animation: scaleUp 0.3s ease;
+        }
+        .mode-options {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1.5rem;
+          margin-top: 1rem;
+        }
+        .mode-card {
+          background: rgba(255, 255, 255, 0.5);
+          border: 1px solid var(--glass-border-subtle);
+          border-radius: 16px;
+          padding: 2rem;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 1rem;
+          cursor: pointer;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .mode-card:hover {
+          transform: translateY(-5px);
+          background: rgba(255, 255, 255, 0.8);
+          border-color: var(--orange-400);
+          box-shadow: 0 10px 25px rgba(249, 115, 22, 0.15);
+        }
+        .mode-card.recommended {
+          border: 2px solid var(--orange-500);
+          position: relative;
+        }
+        .recommended-badge {
+          position: absolute;
+          top: -12px;
+          background: var(--orange-500);
+          color: white;
+          font-size: 0.75rem;
+          font-weight: 600;
+          padding: 0.25rem 0.75rem;
+          border-radius: 12px;
+          text-transform: uppercase;
+        }
+        .mode-icon-wrapper {
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(249, 115, 22, 0.08);
+          color: var(--orange-500);
+        }
+        .mode-card:hover .mode-icon-wrapper {
+          background: var(--orange-500);
+          color: white;
+          transform: scale(1.1);
+          transition: all 0.3s ease;
+        }
+        .mode-card-title {
+          font-size: 1.15rem;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .mode-card-desc {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          line-height: 1.5;
+        }
+        .mode-card-btn {
+          margin-top: auto;
+          width: 100%;
+          padding: 0.6rem;
+          border-radius: 8px;
+          font-weight: 600;
+          font-size: 0.88rem;
+          border: 1px solid var(--glass-border);
+          background: rgba(255, 255, 255, 0.6);
+          color: var(--text-primary);
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .mode-card.recommended .mode-card-btn {
+          background: var(--orange-500);
+          color: white;
+          border: none;
+        }
+        .mode-card.recommended:hover .mode-card-btn {
+          background: var(--orange-600);
+        }
+        .mode-card:not(.recommended):hover .mode-card-btn {
+          background: var(--orange-500);
+          color: white;
+          border-color: var(--orange-500);
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes scaleUp {
+          from { transform: scale(0.95); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
       `}</style>
 
-      {/* Top Visual Graph Progress Flow */}
-      <div className="wizard-graph-flow">
-        <div className={`wizard-node ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`} onClick={() => !executing && setCurrentStep(1)}>
-          <div className="wizard-node-circle">{currentStep > 1 ? <Check size={13} /> : '1'}</div>
-          <span className="wizard-node-label">Segment Builder</span>
-        </div>
-        <div className={`wizard-line ${currentStep > 1 ? 'completed' : ''}`} />
-        
-        <div className={`wizard-node ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 2 && setCurrentStep(2)}>
-          <div className="wizard-node-circle">{currentStep > 2 ? <Check size={13} /> : '2'}</div>
-          <span className="wizard-node-label">Goal & Channel</span>
-        </div>
-        <div className={`wizard-line ${currentStep > 2 ? 'completed' : ''}`} />
+      {agentMode === null && (
+        <div className="mode-selection-overlay">
+          <div className="mode-card-container">
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, margin: 0, background: 'linear-gradient(135deg, var(--orange-500) 0%, var(--orange-600) 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              Choose Campaign Creation Mode
+            </h2>
+            <p style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', margin: 0 }}>
+              Select how you want to build and deploy your next marketing campaign.
+            </p>
+            <div className="mode-options">
+              <div className="mode-card" onClick={() => setAgentMode('manual')}>
+                <div className="mode-icon-wrapper">
+                  <Brain size={28} />
+                </div>
+                <h3 className="mode-card-title">Step-by-Step Builder</h3>
+                <p className="mode-card-desc">
+                  Define filters manually, select campaign strategy goals, choose variation copies, and review execution trail step-by-step.
+                </p>
+                <button className="mode-card-btn">Select Step-by-Step</button>
+              </div>
 
-        <div className={`wizard-node ${currentStep === 3 ? 'active' : ''} ${currentStep > 3 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 3 && setCurrentStep(3)}>
-          <div className="wizard-node-circle">{currentStep > 3 ? <Check size={13} /> : '3'}</div>
-          <span className="wizard-node-label">Copywriter</span>
+              <div className="mode-card recommended" onClick={() => setAgentMode('oneshot')}>
+                <span className="recommended-badge">AI Native</span>
+                <div className="mode-icon-wrapper">
+                  <Sparkles size={28} />
+                </div>
+                <h3 className="mode-card-title">One-Shot AI Copilot</h3>
+                <p className="mode-card-desc">
+                  Just type what you want to achieve or click an AI-generated suggestion to build, draft, and launch the campaign end-to-end instantly.
+                </p>
+                <button className="mode-card-btn">Select One-Shot</button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className={`wizard-line ${currentStep > 3 ? 'completed' : ''}`} />
+      )}
 
-        <div className={`wizard-node ${currentStep === 4 ? 'active' : ''}`} onClick={() => !executing && currentStep >= 4 && setCurrentStep(4)}>
-          <div className="wizard-node-circle">4</div>
-          <span className="wizard-node-label">Launch Review</span>
-        </div>
-      </div>
+      {agentMode === 'oneshot' && (
+        <div className="oneshot-mode-container" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          {/* Header row with switch button */}
+          <div className="oneshot-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', background: 'rgba(255,255,255,0.45)', backdropFilter: 'blur(14px)', border: '1px solid rgba(255,255,255,0.28)', borderRadius: '12px', padding: '0.6rem 1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Sparkles size={18} style={{ color: 'var(--orange-500)' }} />
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}>One-Shot AI Copilot</h3>
+            </div>
+            <button 
+              className="wizard-btn wizard-btn-prev" 
+              onClick={() => { setAgentMode(null); handleReset(); }}
+              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+            >
+              Change Mode
+            </button>
+          </div>
 
-      {/* Execution view takes over when launching */}
-      {executing ? (
-        <div className="execution-area" style={{ maxWidth: '800px', margin: '0 auto' }}>
-          <ExecutionTrail
-            steps={trailSteps}
-            campaignResult={campaignResult}
-            error={execError}
-            onDone={handleReset}
-          />
+          {/* Execution view takes over when launching */}
+          {executing ? (
+            <div className="execution-area" style={{ maxWidth: '800px', margin: '0 auto', width: '100%' }}>
+              <ExecutionTrail
+                steps={trailSteps}
+                campaignResult={campaignResult}
+                error={execError}
+                onDone={handleReset}
+              />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '1.5rem' }}>
+              {/* Messages area or welcome cards */}
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto', paddingRight: '0.5rem', minHeight: 0 }}>
+                {oneshotMessages.length <= 1 ? (
+                  /* Welcome view & Suggestions */
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: '2rem', padding: '2rem' }}>
+                    <div style={{ textAlign: 'center', maxWidth: '600px' }}>
+                      <div style={{ width: '70px', height: '70px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--orange-400) 0%, var(--orange-600) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', color: '#fff', boxShadow: '0 10px 25px rgba(249,115,22,0.3)' }}>
+                        <Bot size={35} />
+                      </div>
+                      <h2 style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                        What campaign would you like to run today?
+                      </h2>
+                      <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>
+                        Describe your campaign goals, target audience, and preferred channels. Or select one of the self-calculated campaign suggestions based on your customer analytics.
+                      </p>
+                    </div>
+
+                    {/* Suggestions Section */}
+                    <div style={{ width: '100%', maxWidth: '800px' }}>
+                      <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Brain size={14} style={{ color: 'var(--orange-500)' }} /> Data-Driven Campaign Suggestions
+                      </h4>
+                      
+                      {loadingSuggestions ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center', padding: '2rem' }}>
+                          <div className="thinking-dots"><span /><span /><span /></div>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Analyzing customer data points...</span>
+                        </div>
+                      ) : campaignSuggestions.length > 0 ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
+                          {campaignSuggestions.map((s, idx) => (
+                            <div 
+                              key={idx} 
+                              className="ai-rec-card" 
+                              onClick={() => handleSelectSuggestion(s)}
+                              style={{ cursor: 'pointer', padding: '1.25rem', border: '1px solid var(--glass-border-subtle)', background: 'rgba(255,255,255,0.25)' }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                                  {s.prompt}
+                                </span>
+                                <span className="ai-rec-count-badge" style={{ textTransform: 'uppercase', fontSize: '0.7rem' }}>
+                                  {s.channel}
+                                </span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                {s.description}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '2rem', background: 'rgba(255,255,255,0.15)', borderRadius: '12px', border: '1px solid var(--glass-border-subtle)', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                          No suggestions available at this time.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Conversation view */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem', maxWidth: '800px', margin: '0 auto', width: '100%' }}>
+                    {oneshotMessages.map(msg => (
+                      <div
+                        key={msg.id}
+                        style={{
+                          maxWidth: '75%',
+                          padding: '0.8rem 1.1rem',
+                          borderRadius: '16px',
+                          fontSize: '0.88rem',
+                          lineHeight: '1.5',
+                          alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                          background: msg.role === 'user' ? 'var(--orange-500)' : 'rgba(255, 255, 255, 0.6)',
+                          color: msg.role === 'user' ? '#fff' : 'var(--text-primary)',
+                          border: msg.role === 'user' ? 'none' : '1px solid var(--glass-border-subtle)',
+                          borderBottomRightRadius: msg.role === 'user' ? '2px' : '16px',
+                          borderBottomLeftRadius: msg.role === 'user' ? '16px' : '2px',
+                          boxShadow: '0 4px 15px rgba(0,0,0,0.02)'
+                        }}
+                      >
+                        {msg.content}
+                      </div>
+                    ))}
+                    {loadingOneshot && (
+                      <div
+                        style={{
+                          alignSelf: 'flex-start',
+                          background: 'rgba(255, 255, 255, 0.4)',
+                          color: 'var(--text-muted)',
+                          padding: '0.8rem 1.1rem',
+                          borderRadius: '16px',
+                          borderBottomLeftRadius: '2px',
+                          border: '1px solid var(--glass-border-subtle)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          fontSize: '0.88rem'
+                        }}
+                      >
+                        <div className="thinking-dots"><span /><span /><span /></div> Thinking...
+                      </div>
+                    )}
+                    <div ref={oneshotEndRef} />
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input Bar */}
+              <div 
+                style={{ 
+                  maxWidth: '800px', 
+                  width: '100%', 
+                  margin: '0 auto 1.5rem',
+                  background: 'rgba(255, 255, 255, 0.45)',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                  border: '1px solid var(--glass-border)',
+                  borderRadius: '99px',
+                  padding: '6px 8px 6px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  boxShadow: 'var(--glass-shadow-sm)'
+                }}
+              >
+                <Bot size={20} style={{ color: 'var(--orange-500)', flexShrink: 0 }} />
+                <input
+                  type="text"
+                  value={oneshotInput}
+                  onChange={e => setOneshotInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleSendOneshotChat();
+                  }}
+                  placeholder="Describe your campaign (e.g. Run a WhatsApp campaign for VIPs in Mumbai offering 15% discount)..."
+                  disabled={loadingOneshot}
+                  style={{
+                    flexGrow: 1,
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-primary)',
+                    padding: '8px 0',
+                    fontSize: '0.95rem',
+                    outline: 'none',
+                    minWidth: '0'
+                  }}
+                />
+                <button
+                  disabled={!oneshotInput.trim() || loadingOneshot}
+                  onClick={handleSendOneshotChat}
+                  style={{
+                    background: 'var(--orange-500)',
+                    color: '#fff',
+                    border: 'none',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    flexShrink: 0
+                  }}
+                >
+                  <Send size={15} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      ) : (
+      )}
+
+      {agentMode === 'manual' && (
+        <>
+          {/* Top Visual Graph Progress Flow */}
+          <div className="wizard-graph-flow">
+            <div className={`wizard-node ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`} onClick={() => !executing && setCurrentStep(1)}>
+              <div className="wizard-node-circle">{currentStep > 1 ? <Check size={13} /> : '1'}</div>
+              <span className="wizard-node-label">Segment Builder</span>
+            </div>
+            <div className={`wizard-line ${currentStep > 1 ? 'completed' : ''}`} />
+            
+            <div className={`wizard-node ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 2 && setCurrentStep(2)}>
+              <div className="wizard-node-circle">{currentStep > 2 ? <Check size={13} /> : '2'}</div>
+              <span className="wizard-node-label">Goal & Channel</span>
+            </div>
+            <div className={`wizard-line ${currentStep > 2 ? 'completed' : ''}`} />
+
+            <div className={`wizard-node ${currentStep === 3 ? 'active' : ''} ${currentStep > 3 ? 'completed' : ''}`} onClick={() => !executing && currentStep >= 3 && setCurrentStep(3)}>
+              <div className="wizard-node-circle">{currentStep > 3 ? <Check size={13} /> : '3'}</div>
+              <span className="wizard-node-label">Copywriter</span>
+            </div>
+            <div className={`wizard-line ${currentStep > 3 ? 'completed' : ''}`} />
+
+            <div className={`wizard-node ${currentStep === 4 ? 'active' : ''}`} onClick={() => !executing && currentStep >= 4 && setCurrentStep(4)}>
+              <div className="wizard-node-circle">4</div>
+              <span className="wizard-node-label">Launch Review</span>
+            </div>
+
+            {/* Change Mode Button */}
+            <button 
+              onClick={() => { setAgentMode(null); handleReset(); }} 
+              style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer', transition: 'all 0.2s ease' }}
+              onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--orange-400)'; e.currentTarget.style.color = 'var(--orange-600)'; }}
+              onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--glass-border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+            >
+              Change Mode
+            </button>
+          </div>
+
+          {/* Execution view takes over when launching */}
+          {executing ? (
+            <div className="execution-area" style={{ maxWidth: '800px', margin: '0 auto' }}>
+              <ExecutionTrail
+                steps={trailSteps}
+                campaignResult={campaignResult}
+                error={execError}
+                onDone={handleReset}
+              />
+            </div>
+          ) : (
         <>
           {/* Main Wizard Canvas */}
           <div className="wizard-canvas">
@@ -1636,36 +2183,175 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 </div>
 
                 <div className="wizard-right-panel">
-                  <h3 className="panel-title ai-recommendation-title"><Brain size={16} /> AI Strategy Recommendation</h3>
+                  <h3 className="panel-title ai-recommendation-title"><Brain size={16} /> Strategy & Channel Analytics</h3>
 
+                  {/* AI Strategy Recommendation Section */}
                   {loadingStrategy ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem 0', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1rem 0', alignItems: 'center' }}>
                       <div className="thinking-dots"><span /><span /><span /></div>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Evaluating filters for channel matching...</span>
                     </div>
                   ) : strategyRec ? (
-                    <div className="ai-rec-card" style={{ border: '1px solid rgba(249, 115, 22, 0.25)', background: 'rgba(255,255,255,0.25)' }}>
-                      <div className="ai-rec-header" style={{ borderBottom: '1px solid var(--glass-border-subtle)', paddingBottom: '0.5rem' }}>
-                        <span className="ai-rec-name" style={{ color: 'var(--orange-600)' }}>Recommended Plan</span>
+                    <div className="ai-rec-card" style={{ border: '1px solid rgba(249, 115, 22, 0.25)', background: 'rgba(255,255,255,0.25)', padding: '0.85rem' }}>
+                      <div className="ai-rec-header" style={{ borderBottom: '1px solid var(--glass-border-subtle)', paddingBottom: '0.35rem' }}>
+                        <span className="ai-rec-name" style={{ color: 'var(--orange-600)', fontSize: '0.88rem' }}>AI Recommended Plan</span>
                       </div>
-                      <div style={{ margin: '0.5rem 0', fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                      <div style={{ margin: '0.35rem 0', fontSize: '0.8rem', color: 'var(--text-primary)' }}>
                         <div><strong>Goal:</strong> {strategyRec.goal}</div>
-                        <div style={{ marginTop: '0.2rem' }}><strong>Channel:</strong> {strategyRec.channel.toUpperCase()}</div>
+                        <div style={{ marginTop: '0.15rem' }}><strong>Channel:</strong> {strategyRec.channel.toUpperCase()}</div>
                       </div>
-                      <p className="ai-rec-reason" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{strategyRec.reason}</p>
+                      <p className="ai-rec-reason" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 0.5rem 0' }}>{strategyRec.reason}</p>
                       <button
                         className="ai-rec-apply-btn"
                         onClick={applyStrategySuggestion}
-                        style={{ marginTop: '0.5rem' }}
+                        style={{ marginTop: '0.2rem', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
                       >
                         Apply AI Strategy
                       </button>
                     </div>
                   ) : (
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '2rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center', padding: '1rem', background: 'rgba(255,255,255,0.1)', borderRadius: '8px' }}>
                       Set segment filters to generate strategy recommendations.
                     </div>
                   )}
+
+                  {/* Channel Performance Dashboard Section */}
+                  <div style={{ marginTop: '0.5rem', width: '100%' }}>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Sparkles size={14} style={{ color: 'var(--orange-500)' }} /> Channel Performance Comparison
+                    </h4>
+                    <div style={{ overflowX: 'auto', background: 'rgba(255, 255, 255, 0.15)', borderRadius: '12px', border: '1px solid var(--glass-border-subtle)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.78rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--glass-border)', background: 'rgba(255, 255, 255, 0.1)' }}>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>Channel</th>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>Reach</th>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>Open</th>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>Click</th>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>Cost</th>
+                            <th style={{ padding: '0.5rem 0.6rem', fontWeight: 600 }}>ROI</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[
+                            { id: 'whatsapp', name: 'WhatsApp', icon: '💬', openRate: '92%', clickRate: '25%', cost: '$$$', roi: 'High' },
+                            { id: 'email', name: 'Email', icon: '📧', openRate: '22%', clickRate: '3%', cost: '$', roi: 'Medium' },
+                            { id: 'sms', name: 'SMS', icon: '📱', openRate: '85%', clickRate: '8%', cost: '$$', roi: 'Medium' },
+                            { id: 'rcs', name: 'RCS', icon: '✨', openRate: '78%', clickRate: '12%', cost: '$$', roi: 'High' }
+                          ].map(ch => {
+                            const isSelected = selectedChannel === ch.id;
+                            const isRecommended = strategyRec && strategyRec.channel.toLowerCase() === ch.id;
+                            
+                            // reach calculation helper
+                            const getChannelReach = (channelId: string) => {
+                              if (audienceCount === 0) return 0;
+                              const hasWA = selectedTags.includes('whatsapp_opted');
+                              const hasEmail = selectedTags.includes('email_opted');
+                              const hasSMS = selectedTags.includes('sms_opted');
+
+                              switch (channelId) {
+                                case 'whatsapp':
+                                  return hasWA ? audienceCount : Math.round(audienceCount * 0.327);
+                                case 'email':
+                                  return hasEmail ? audienceCount : Math.round(audienceCount * 0.330);
+                                case 'sms':
+                                  return hasSMS ? audienceCount : Math.round(audienceCount * 0.343);
+                                case 'rcs':
+                                  return hasSMS ? audienceCount : Math.round(audienceCount * 0.315);
+                                default:
+                                  return 0;
+                              }
+                            };
+                            
+                            const reach = getChannelReach(ch.id);
+                            
+                            return (
+                              <tr
+                                key={ch.id}
+                                onClick={() => setSelectedChannel(ch.id)}
+                                style={{
+                                  borderBottom: '1px solid var(--glass-border-subtle)',
+                                  cursor: 'pointer',
+                                  background: isSelected ? 'rgba(249, 115, 22, 0.08)' : 'transparent',
+                                  transition: 'all 0.2s ease',
+                                  fontWeight: isSelected ? 600 : 400
+                                }}
+                              >
+                                <td style={{ padding: '0.5rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                  <span>{ch.icon}</span>
+                                  <span style={{ color: isSelected ? 'var(--orange-600)' : 'var(--text-primary)' }}>
+                                    {ch.name}
+                                    {isRecommended && (
+                                      <span style={{
+                                        marginLeft: '0.2rem',
+                                        fontSize: '0.6rem',
+                                        background: 'var(--orange-500)',
+                                        color: '#fff',
+                                        padding: '0.05rem 0.2rem',
+                                        borderRadius: '3px',
+                                        fontWeight: 600
+                                      }}>
+                                        Rec
+                                      </span>
+                                    )}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '0.5rem 0.6rem', color: 'var(--text-secondary)' }}>
+                                  {reach.toLocaleString()}
+                                </td>
+                                <td style={{ padding: '0.5rem 0.6rem', color: '#10b981' }}>{ch.openRate}</td>
+                                <td style={{ padding: '0.5rem 0.6rem', color: '#1A73E8' }}>{ch.clickRate}</td>
+                                <td style={{ padding: '0.5rem 0.6rem', color: 'var(--text-secondary)' }}>
+                                  <span style={{ color: ch.cost.length >= 3 ? 'var(--orange-600)' : 'var(--text-muted)' }}>{ch.cost}</span>
+                                </td>
+                                <td style={{ padding: '0.5rem 0.6rem' }}>
+                                  <span style={{
+                                    color: ch.roi === 'High' ? '#10b981' : '#f59e0b',
+                                    background: ch.roi === 'High' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                    padding: '0.1rem 0.3rem',
+                                    borderRadius: '4px',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 600
+                                  }}>
+                                    {ch.roi}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Channel Advice Box */}
+                  <div style={{
+                    marginTop: '0.5rem',
+                    padding: '0.85rem',
+                    borderRadius: '12px',
+                    background: 'rgba(249, 115, 22, 0.04)',
+                    border: '1px solid rgba(249, 115, 22, 0.15)'
+                  }}>
+                    <h5 style={{ margin: '0 0 0.35rem 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--orange-700)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <Brain size={12} /> Selected Channel Advice
+                    </h5>
+                    <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.45' }}>
+                      {(() => {
+                        switch (selectedChannel) {
+                          case 'whatsapp':
+                            return "WhatsApp yields maximum engagement (92% open rate) and supports interactive buttons/images. It is highly recommended for VIP Spenders and active segments, though it has the highest message costs.";
+                          case 'email':
+                            return "Email is extremely cost-effective with zero volume-based tariffs. Ideal for long-form copywriting, news, or re-engaging price-sensitive segments, but click-through rates are typically low (2-3%).";
+                          case 'sms':
+                            return "SMS has high direct delivery speeds and requires no internet data. Excellent for short time-sensitive offers or simple coupon codes, but restricted to plain text with limited length.";
+                          case 'rcs':
+                            return "RCS offers visual branding, rich cards, and verified sender status directly in the standard SMS inbox. Great middle ground for visual engagement at lower cost than WhatsApp, but iOS reach is limited.";
+                          default:
+                            return "";
+                        }
+                      })()}
+                    </p>
+                  </div>
                 </div>
               </>
             )}
@@ -1821,6 +2507,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           </div>
         </>
       )}
+    </>
+  )}
 
       {copilotPortalContent}
     </div>

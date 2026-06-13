@@ -161,10 +161,8 @@ async def create_segment(
             system_prompt=FILTER_GENERATION_PROMPT,
             user_input=audience_description,
         )
-        filter_text = filter_raw.strip()
-        if filter_text.startswith("```"):
-            filter_text = filter_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        filter_criteria = json.loads(filter_text)
+        from app.agent.nodes import _parse_json_response
+        filter_criteria = _parse_json_response(filter_raw)
     except Exception as e:
         logger.warning(f"[create_segment] Filter generation failed: {e}. Using fallback.")
         filter_criteria = {"filters": []}  # Safe fallback: matches all customers
@@ -282,6 +280,7 @@ async def execute_campaign(
     message_template: str,
     campaign_name: str,
     audience_sql: str,
+    conversation_id: Optional[str] = None,
 ) -> dict:
     """
     Execute the campaign: re-query the audience, create the campaign record,
@@ -316,8 +315,8 @@ async def execute_campaign(
     try:
         async with readonly_pool.acquire() as conn:
             await conn.execute("SET statement_timeout = '10000'")
-            # Strip safety/preview limits (100 or 1000) so we execute on the full segment
-            exec_sql = re.sub(r"\bLIMIT\s+(?:100|1000)\b", "", audience_sql, flags=re.IGNORECASE)
+            # Strip safety/preview limits so we execute on the full segment
+            exec_sql = re.sub(r"\bLIMIT\s+\d+\b", "", audience_sql, flags=re.IGNORECASE)
             audience_rows = await conn.fetch(exec_sql)
     except Exception as e:
         logger.error(f"[execute_campaign] Audience query failed: {e}")
@@ -363,7 +362,10 @@ async def execute_campaign(
     # Step 5: Queue for dispatch
     try:
         from app.services.redis_queue import push_to_queue
-        push_to_queue("crm_dispatch_queue", {"campaign_id": str(campaign_id)})
+        push_to_queue("crm_dispatch_queue", {
+            "campaign_id": str(campaign_id),
+            "conversation_id": conversation_id
+        })
     except Exception as e:
         logger.warning(f"[execute_campaign] Dispatch queue push failed (non-fatal): {e}")
 

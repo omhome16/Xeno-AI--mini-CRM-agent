@@ -21,6 +21,13 @@ class Settings(BaseSettings):
 
     # ── LLM API Keys ──
     GEMINI_API_KEY: str = ""
+    LLM_MODEL_ID: str = "deepseek.deepseek-r1-v1:0"
+
+    # ── AWS Bedrock Settings ──
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_BEARER_TOKEN_BEDROCK: str = ""
 
     # ── LangSmith Tracing ──
     LANGSMITH_TRACING: str = ""
