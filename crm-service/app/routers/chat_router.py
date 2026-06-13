@@ -174,7 +174,7 @@ async def _run_graph(
             await _process_graph_event(conversation_id, event)
 
         # Graph completed — send result
-        snapshot = graph.get_state(config)
+        snapshot = await graph.aget_state(config)
         final_state = snapshot.values if snapshot else {}
         logger.info(f"[_run_graph] Graph execution completed successfully for conversation_id={conversation_id}")
         await push_event(conversation_id, "result", {
