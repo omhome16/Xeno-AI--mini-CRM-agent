@@ -9,57 +9,12 @@ An **AI-native Mini CRM** designed for Direct-to-Consumer (D2C) and retail brand
 The project consists of three decoupled components communicating via asynchronous queues and HTTP interfaces:
 
 ```mermaid
-graph TD
-    subgraph Frontend [React TypeScript Client]
-        UI[Glassmorphism Chat & Dashboard UI]
-    end
-
-    subgraph CRM_Backend [CRM Service FastAPI]
-        Router[FastAPI Routers]
-        LangGraphAgent[LangGraph Campaign Graph]
-        SQLG[SQLGuard AST Security Guard]
-        MainPool[(Main PG Pool - RW)]
-        ROPool[(Read-only PG Pool - RO)]
-        DispatchWorker[Campaign Dispatch Worker]
-        ReceiptWorker[Callback Receipt Worker]
-    end
-
-    subgraph Channel_Simulator [Channel Service FastAPI]
-        ChanRouter[Send API Router]
-        SimWorker[Simulation Worker]
-        ProbModel[Lifecycle Funnel Simulator]
-    end
-
-    subgraph Data_Stores [Cache & Database]
-        PG[(PostgreSQL DB)]
-        Redis[(Redis Cache & Queues)]
-    end
-
-    subgraph LLM_Provider [Google Gemini API]
-        Gemini[Gemini 2.5 Flash]
-    end
-
-    %% Network / API Connections
-    UI -->|HTTP / SSE Stream| Router
-    Router --> LangGraphAgent
-    LangGraphAgent -->|1. SQL Generation| Gemini
-    LangGraphAgent -->|2. AST Validation| SQLG
-    LangGraphAgent -->|3. Segment Size Verification| ROPool
-    ROPool --> PG
-    LangGraphAgent -->|4. Persist Segment & Campaign| MainPool
-    MainPool --> PG
-
-    %% Asynchronous Pipelines
-    LangGraphAgent -->|Queue Campaign| Redis
-    Redis -.->|Pop Task| DispatchWorker
-    DispatchWorker -->|HTTP POST /api/send| ChanRouter
-    ChanRouter -->|Queue Simulation| Redis
-    Redis -.->|Pop Simulation Job| SimWorker
-    SimWorker --> ProbModel
-    ProbModel -->|Webhook Callbacks| Router
-    Router -->|Queue Receipt| Redis
-    Redis -.->|Pop Batch Receipts| ReceiptWorker
-    ReceiptWorker -->|Update Metrics & Customer CLV| MainPool
+graph LR
+    User([Marketer]) <--> Frontend[React Frontend UI]
+    Frontend <-->|HTTP / SSE Stream| CRM[CRM Backend Service]
+    CRM <-->|Redis Queues| Channel[Channel Simulator]
+    CRM <-->|SELECT Queries| Gemini[Google Gemini 2.5]
+    CRM <-->|RW & RO Pools| PostgreSQL[(PostgreSQL Database)]
 ```
 
 * **React Frontend**: Built using TypeScript and styled with custom glassmorphism CSS. It handles the campaign chat interface, custom segment rules preview, and campaign statistics dashboards. It streams real-time agent thinking steps via Server-Sent Events (SSE) and polls campaign performance indicators automatically.
@@ -72,84 +27,17 @@ graph TD
 
 ## 🔄 End-to-End Campaign Lifecycle
 
-The following sequence diagram outlines the entire workflow of the application from the marketer's initial brainstorm to delivery simulation and webhook updates:
+The following diagram outlines the entire workflow of the application from the marketer's initial brainstorm to delivery simulation and webhook updates:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Marketer
-    participant UI as React Client
-    participant CRM as CRM Service
-    participant Gemini as Gemini 2.5 Flash
-    participant DB as PostgreSQL
-    participant Redis as Redis Queues
-    participant CS as Channel Service
-
-    Marketer->>UI: Input prompt / Chat in Copilot
-    UI->>CRM: POST /api/chat (copilot or oneshot)
-    CRM->>Gemini: Extract campaign parameters from chat
-    Gemini-->>CRM: Extracted brief updates (channel, audience, goal)
-    CRM-->>UI: Live brief state & action suggestions (SSE)
-    
-    Note over Marketer, UI: When brief has Goal, Audience, and Channel:
-    
-    Marketer->>UI: Click "Generate Campaign Plan"
-    UI->>CRM: POST /api/chat/plan
-    CRM->>Gemini: Generate SQL query from NL description
-    Gemini-->>CRM: SQL SELECT query
-    CRM->>CRM: SQLGuard: Verify safety (AST) & append LIMIT
-    CRM->>DB: Execute query via Read-Only Pool (ai_reader)
-    DB-->>CRM: Total customer counts & preview records
-    CRM->>Gemini: Generate personalized message template
-    Gemini-->>CRM: Draft text (e.g. Hello {{name}}...)
-    CRM-->>UI: Return plan preview (count, SQL, message template)
-    
-    Marketer->>UI: Click "Launch Campaign" (Confirm)
-    UI->>CRM: POST /api/chat/execute
-    CRM->>DB: Save Segment & Campaign (status = 'sending')
-    CRM->>DB: Create individual Communication records (status = 'pending')
-    CRM->>Redis: Push campaign_id to crm_dispatch_queue
-    CRM-->>UI: Return 202 Accepted (runs asynchronously)
-
-    Note over CRM, Redis: Background Dispatch Thread
-    Redis->>CRM: Pop campaign_id from crm_dispatch_queue (dispatch_worker)
-    loop For each customer communication
-        CRM->>CS: POST /api/send (communication_id, recipient, message)
-        CS->>Redis: Push to channel_simulation_queue
-        CS-->>CRM: 202 Accepted
-    end
-    CRM->>DB: Update Campaign status = 'completed' (dispatch finished)
-
-    Note over CS, Redis: Background Simulation Thread
-    CS->>CS: simulation_worker pops from channel_simulation_queue
-    loop Probabilistic Funnel Simulation
-        CS->>CS: Sent (100% prob) - Delay 0.1-0.5s
-        CS->>CRM: Webhook POST /api/receipts (status = 'sent')
-        CS->>CS: Delivered (90% prob) / Failed (10% prob) - Delay 0.5-3.0s
-        CS->>CRM: Webhook POST /api/receipts (status = 'delivered' or 'failed')
-        CS->>CS: Opened (60% of delivered) - Delay 2-15s
-        CS->>CRM: Webhook POST /api/receipts (status = 'opened')
-        CS->>CS: Clicked (30% of opened) - Delay 1-10s
-        CS->>CRM: Webhook POST /api/receipts (status = 'clicked')
-        CS->>CS: Converted (10% of clicked) - Delay 0.5-3.0s
-        CS->>CRM: Webhook POST /api/receipts (status = 'converted', revenue, product, category)
-    end
-
-    Note over CRM, Redis: Webhook Receipt Ingestion & Processing
-    CRM->>Redis: process_receipt pushes to crm_receipt_queue
-    Redis->>CRM: Pop batch (up to 50) of receipts (receipt_worker)
-    loop Each receipt in batch
-        CRM->>DB: Insert event into delivery_events (ON CONFLICT DO NOTHING)
-        Note over CRM, DB: Enforces idempotency via uniqueness key
-        alt Valid state transition
-            CRM->>DB: Update communication status (forward-only order)
-            CRM->>DB: Update Campaign denormalized statistics counter (+1)
-            opt Event is 'converted'
-                CRM->>DB: Create Order record (status = 'completed')
-                CRM->>DB: Recompute Customer totals (spent, orders, last_order_at)
-            end
-        end
-    end
+graph TD
+    A[1. Marketer enters Chat Brief] --> B[2. AI extracts parameters & checks audience]
+    B --> C[3. Marketer approves & launches Campaign]
+    C --> D[4. CRM registers Segments & creates Communications]
+    D --> E[5. CRM pushes dispatch job to Redis Queue]
+    E --> F[6. Dispatch Worker sends requests to Channel Simulator]
+    F --> G[7. Simulator processes events & hits Webhook API]
+    G --> H[8. Receipt Worker updates Campaign Metrics & DB stats]
 ```
 
 ---
