@@ -190,7 +190,7 @@ SCHEMA_STATEMENTS: list[str] = [
     DO $$
     BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ai_reader') THEN
-            CREATE ROLE ai_reader WITH LOGIN PASSWORD 'readonly';
+            CREATE ROLE ai_reader WITH LOGIN PASSWORD 'AI_Reader_Secured_Pass_1029#';
         END IF;
     END $$
     """,
