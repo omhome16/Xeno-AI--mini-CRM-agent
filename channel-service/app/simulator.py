@@ -4,21 +4,22 @@ Delivery Simulator — Simulates realistic message delivery lifecycle.
 When the CRM sends a message via POST /api/send, this module spawns an
 independent asyncio task that walks through the delivery lifecycle:
 
-    pending → sent → delivered → opened → clicked
+    pending → sent → delivered → opened → clicked → converted
 
 Each transition has:
   - A random delay (simulating network/user behavior)
   - A probabilistic outcome (not every message gets opened)
   - A callback fired to the CRM receipt API
 
-Probabilities (realistic for marketing campaigns):
+Probabilities (adjusted for 10-20% conversion demonstration):
   - Sent:      100% (always reaches the network)
-  - Delivered:  90% (10% fail — invalid number, blocked, etc.)
-  - Opened:     60% of delivered
-  - Clicked:    30% of opened
+  - Delivered:  95% (5% fail — invalid number, blocked, etc.)
+  - Opened:     80% of delivered
+  - Clicked:    50% of opened
+  - Converted:  40% of clicked
 
 This gives an overall funnel:
-  1000 sent → 900 delivered → 540 opened → 162 clicked
+  1000 sent → 950 delivered → 760 opened → 380 clicked → 152 converted (~15.2% overall conversion)
 """
 
 import asyncio
@@ -79,9 +80,9 @@ async def simulate_delivery(
         })
         logger.info(f"[{communication_id[:8]}] SENT via {channel}")
 
-        # ── Step 2: DELIVERED or FAILED (90% success) ──
+        # ── Step 2: DELIVERED or FAILED (95% success) ──
         await asyncio.sleep(random.uniform(0.5, 3.0))
-        if random.random() < 0.90:
+        if random.random() < 0.95:
             await fire_callback(callback_url, {
                 "communication_id": communication_id,
                 "event_type": "delivered",
@@ -101,8 +102,8 @@ async def simulate_delivery(
             logger.info(f"[{communication_id[:8]}] FAILED: {reason}")
             return  # Stop lifecycle on failure
 
-        # ── Step 3: OPENED (60% of delivered) ──
-        if random.random() < 0.60:
+        # ── Step 3: OPENED (80% of delivered) ──
+        if random.random() < 0.80:
             await asyncio.sleep(random.uniform(2, 15))
             await fire_callback(callback_url, {
                 "communication_id": communication_id,
@@ -114,8 +115,8 @@ async def simulate_delivery(
         else:
             return  # User didn't open
 
-        # ── Step 4: CLICKED (30% of opened) ──
-        if random.random() < 0.30:
+        # ── Step 4: CLICKED (50% of opened) ──
+        if random.random() < 0.50:
             await asyncio.sleep(random.uniform(1, 10))
             await fire_callback(callback_url, {
                 "communication_id": communication_id,
@@ -127,8 +128,8 @@ async def simulate_delivery(
         else:
             return  # User didn't click
 
-        # ── Step 5: CONVERTED (10% of clicked) ──
-        if random.random() < 0.10:
+        # ── Step 5: CONVERTED (40% of clicked) ──
+        if random.random() < 0.40:
             await asyncio.sleep(random.uniform(0.5, 3.0))
             await fire_callback(callback_url, {
                 "communication_id": communication_id,
