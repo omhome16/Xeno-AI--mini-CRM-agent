@@ -199,6 +199,23 @@ async def health_check():
     }
 
 
+@app.get("/api/system/warm-channel", tags=["System"])
+async def warm_channel():
+    """
+    Ping the channel service to wake it up (used by frontend to prevent cold starts).
+    """
+    try:
+        import httpx
+        settings = get_settings()
+        health_url = settings.CHANNEL_SERVICE_URL.replace("/api/send", "/health")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(health_url)
+            return {"status": "ok", "channel_status": response.status_code}
+    except Exception as e:
+        logger.warning(f"Failed to ping channel service during frontend warm-up request: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
 # ── API Root ──
 @app.get("/", tags=["System"])
 async def root():

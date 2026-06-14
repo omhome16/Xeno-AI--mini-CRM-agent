@@ -396,3 +396,16 @@ export async function fetchCampaignRecommendations(): Promise<{
   if (!res.ok) throw new Error('Failed to fetch campaign recommendations');
   return res.json();
 }
+
+export async function warmChannelService(): Promise<{ status: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/system/warm-channel`);
+    if (res.ok) {
+      return res.json();
+    }
+  } catch (err) {
+    console.warn('Failed to warm channel service:', err);
+  }
+  return { status: 'error' };
+}
+

@@ -12,6 +12,7 @@ import {
   fetchSegmentCount,
   fetchCampaignMetadata,
   fetchCampaignRecommendations,
+  warmChannelService,
   type AudienceRecommendation,
   type StrategyRecommendation,
   type MessageRecommendation,
@@ -176,6 +177,18 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   useEffect(() => {
     oneshotEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [oneshotMessages]);
+
+  // Keep channel service warm while active in this tab (prevents Render free tier idle spindown)
+  useEffect(() => {
+    if (!isActive) return;
+    const warm = () => {
+      warmChannelService().catch(() => {});
+    };
+    warm();
+    // Ping every 5 minutes to stay ahead of Render's 15-minute idle limit
+    const interval = setInterval(warm, 300000);
+    return () => clearInterval(interval);
+  }, [isActive]);
 
   // Load campaign suggestions when oneshot mode is activated
   const loadCampaignSuggestions = async () => {
