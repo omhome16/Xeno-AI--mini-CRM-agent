@@ -4,6 +4,14 @@ An **AI-native Mini CRM** designed for Direct-to-Consumer (D2C) and retail brand
 
 ---
 
+## 🚀 Live Deployments
+
+* **Frontend Web App**: [xeno-ai-mini-crm-agent.vercel.app](https://xeno-ai-mini-crm-agent.vercel.app/)
+* **CRM Backend Service (Railway)**: [xeno-ai-mini-crm-agent-production.up.railway.app](https://xeno-ai-mini-crm-agent-production.up.railway.app)
+* **Channel Simulator Service (Render)**: [xeno-ai-mini-crm-agent.onrender.com](https://xeno-ai-mini-crm-agent.onrender.com)
+
+---
+
 ## 🏗️ High-Level System Architecture
 
 The project consists of three decoupled components communicating via asynchronous queues and HTTP interfaces:
@@ -149,7 +157,7 @@ Even if SQLGuard is bypassed, the database itself enforces security:
 * The read-only connection pool connects to PostgreSQL using the **`ai_reader`** role.
 * This role is explicitly granted only `SELECT` privileges:
   ```sql
-  CREATE ROLE ai_reader WITH LOGIN PASSWORD 'readonly';
+  CREATE ROLE ai_reader WITH LOGIN PASSWORD 'AI_Reader_Secured_Pass_1029#';
   GRANT SELECT ON ALL TABLES IN SCHEMA public TO ai_reader;
   ```
 * Any write or modification attempts will be blocked by PostgreSQL's permission model.
@@ -339,11 +347,20 @@ Open [http://localhost:5173](http://localhost:5173) in your browser to access th
 
 ## 🛠️ Diagnostics & Maintenance
 
+### Truncating the Database
+To completely clear all campaign execution logs, segments, customer profiles, and order data:
+```bash
+cd crm-service
+# Activate virtual environment
+python truncate_db.py [optional_DATABASE_URL]
+```
+This runs a utility that executes a `TRUNCATE ... CASCADE` on all data tables, returning the database to a clean, empty state.
+
 ### Reseeding the Database
-To clear all data, resector campaigns, and reset the customer metrics to a clean, fresh state:
+To clear all data and automatically regenerate 1,500 new realistic Indian e-commerce customer profiles and ~5,000 order histories:
 ```bash
 cd crm-service
 # Activate virtual environment
 python reseed_db.py
 ```
-This runs a secure utility that truncates all tables except the brand profiles, maps customer order history, recalculates aggregates, and syncs tag structures.
+This runs a local generator that truncates the tables and seeds them with archetypes (VIP regular, active, lapsed, new). Alternatively, truncating the database and restarting the Railway backend triggers this seeder directly on the cloud server in under 45 seconds.
