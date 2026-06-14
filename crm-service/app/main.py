@@ -170,13 +170,14 @@ app = FastAPI(
 )
 
 # ── CORS Middleware ──
+origins = [o.strip().rstrip("/") for o in settings.FRONTEND_URL.split(",") if o.strip()]
+for default_origin in ["http://localhost:5173", "http://localhost:3000"]:
+    if default_origin not in origins:
+        origins.append(default_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Fallback
-    ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
