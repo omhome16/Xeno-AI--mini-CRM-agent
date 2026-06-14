@@ -127,4 +127,4 @@ def _build_readonly_url(database_url: str) -> str:
     else:
         host_and_db = rest
 
-    return f"{scheme}://ai_reader:AI_Reader_Secured_Pass_1029#@{host_and_db}"
+    return f"{scheme}://ai_reader:AI_Reader_Secured_Pass_1029%23@{host_and_db}"
