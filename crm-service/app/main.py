@@ -207,7 +207,12 @@ async def warm_channel():
     try:
         import httpx
         settings = get_settings()
-        health_url = settings.CHANNEL_SERVICE_URL.replace("/api/send", "/health")
+        # Normalize URL first (handles user configuration missing /api/send suffix)
+        channel_url = settings.CHANNEL_SERVICE_URL.strip().rstrip("/")
+        if not channel_url.endswith("/api/send"):
+            channel_url = f"{channel_url}/api/send"
+            
+        health_url = channel_url.replace("/api/send", "/health")
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(health_url)
             return {"status": "ok", "channel_status": response.status_code}

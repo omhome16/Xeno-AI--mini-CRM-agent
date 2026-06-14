@@ -79,8 +79,13 @@ async def dispatch_campaign(
     pool = get_main_pool()
     cid = UUID(campaign_id)
 
+    # Normalize Channel Service URL (handles user configuration missing /api/send suffix)
+    channel_url = settings.CHANNEL_SERVICE_URL.strip().rstrip("/")
+    if not channel_url.endswith("/api/send"):
+        channel_url = f"{channel_url}/api/send"
+
     # Warm up channel service before starting dispatch (handles Render free tier cold start)
-    await _warm_channel_service(settings.CHANNEL_SERVICE_URL)
+    await _warm_channel_service(channel_url)
 
     # Fetch campaign
     campaign = await campaign_repo.get_campaign(pool, cid)
@@ -134,7 +139,7 @@ async def dispatch_campaign(
             for comm in batch:
                 try:
                     response = await client.post(
-                        settings.CHANNEL_SERVICE_URL,
+                        channel_url,
                         json={
                             "communication_id": str(comm["id"]),
                             "recipient": {
