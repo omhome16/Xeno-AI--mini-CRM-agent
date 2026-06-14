@@ -31,6 +31,30 @@ BATCH_DELAY_S = 0.5      # Delay between batches
 SEND_TIMEOUT_S = 10.0    # Timeout per send request
 
 
+async def _warm_channel_service(service_url: str):
+    """
+    Warms up the channel service (esp. if hosted on Render free tier with cold starts).
+    Sends a GET request to the /health endpoint and waits up to 90 seconds for it to wake up.
+    """
+    health_url = service_url.replace("/api/send", "/health")
+    logger.info(f"Warming up channel service at {health_url}...")
+    
+    # We will try to contact it for up to 90 seconds (18 attempts, 5s delay)
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for attempt in range(18):
+            try:
+                response = await client.get(health_url)
+                if response.status_code == 200:
+                    logger.info("✓ Channel service is awake and healthy!")
+                    return True
+            except Exception as e:
+                logger.info(f"Channel service warming attempt {attempt + 1}/18: {e}")
+            await asyncio.sleep(5.0)
+            
+    logger.warning("Channel service did not respond to health check in 90 seconds. Proceeding anyway...")
+    return False
+
+
 async def dispatch_campaign(
     campaign_id: str,
     conversation_id: Optional[str] = None,
@@ -54,6 +78,9 @@ async def dispatch_campaign(
     settings = get_settings()
     pool = get_main_pool()
     cid = UUID(campaign_id)
+
+    # Warm up channel service before starting dispatch (handles Render free tier cold start)
+    await _warm_channel_service(settings.CHANNEL_SERVICE_URL)
 
     # Fetch campaign
     campaign = await campaign_repo.get_campaign(pool, cid)
