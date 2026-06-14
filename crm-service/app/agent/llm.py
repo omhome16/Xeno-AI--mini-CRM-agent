@@ -67,7 +67,7 @@ class GeminiLLMClient:
         if not self._gemini_key:
             raise LLMError("Gemini API key is not configured. Set GEMINI_API_KEY.")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self._gemini_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
         
         generation_config = {
             "temperature": _TEMPERATURE,
@@ -90,7 +90,8 @@ class GeminiLLMClient:
         }
         
         headers = {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "x-goog-api-key": self._gemini_key
         }
 
         last_error = None
