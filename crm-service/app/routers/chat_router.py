@@ -593,6 +593,10 @@ async def recommend_audience():
             tags = await conn.fetch("SELECT unnest(tags) as tag, COUNT(*) as count FROM customers GROUP BY tag ORDER BY count DESC LIMIT 10")
             spend = await conn.fetchrow("SELECT MIN(total_spent) as min, MAX(total_spent) as max, AVG(total_spent) as avg FROM customers")
             
+        min_spent = float(spend["min"]) if spend and spend["min"] is not None else 0.0
+        max_spent = float(spend["max"]) if spend and spend["max"] is not None else 0.0
+        avg_spent = float(spend["avg"]) if spend and spend["avg"] is not None else 0.0
+        
         stats_ctx = f"Total Customers: {total}\n"
         stats_ctx += "Top Cities:\n"
         for r in cities:
@@ -600,7 +604,7 @@ async def recommend_audience():
         stats_ctx += "Tags:\n"
         for r in tags:
             stats_ctx += f"  - {r['tag']}: {r['count']}\n"
-        stats_ctx += f"Spend Statistics:\n  - Min: {spend['min']}\n  - Max: {spend['max']}\n  - Avg: {spend['avg']:.2f}\n"
+        stats_ctx += f"Spend Statistics:\n  - Min: {min_spent}\n  - Max: {max_spent}\n  - Avg: {avg_spent:.2f}\n"
         
         system_prompt = AUDIENCE_RECOMMENDATION_PROMPT.replace("{stats}", stats_ctx)
         
