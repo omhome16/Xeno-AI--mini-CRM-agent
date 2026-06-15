@@ -17,13 +17,49 @@ An **AI-native Mini CRM** designed for Direct-to-Consumer (D2C) and retail brand
 The project consists of three decoupled components communicating via asynchronous queues and HTTP interfaces:
 
 ```mermaid
-graph LR
-    User([Marketer]) <--> Frontend[React Frontend UI]
-    Frontend <-->|HTTP / SSE Stream| CRM[CRM Backend Service]
-    CRM <-->|Redis Queues| Channel[Channel Simulator]
-    CRM <-->|SELECT Queries| Gemini[Google Gemini 2.5]
-    CRM <-->|RW & RO Pools| PostgreSQL[(PostgreSQL Database)]
+graph TD
+    %% Frontend Layer
+    subgraph Frontend_Layer ["Frontend UI"]
+        UI["React + TypeScript App"]
+    end
+
+    %% CRM Backend Service
+    subgraph CRM_Service ["CRM Backend Service (FastAPI)"]
+        Agent["LangGraph Stateful Agent"]
+        Gemini[("Google Gemini 2.5 Flash API")]
+        Workers["Background Workers<br>(Dispatch & Receipt)"]
+    end
+
+    %% Redis State & Queues
+    subgraph Redis_Backbone ["Redis Asynchronous Backbone"]
+        Checkpoint[("LangGraph Checkpoint Store")]
+        Queues[("Task Queues<br>(crm_dispatch_queue, crm_receipt_queue)")]
+    end
+
+    %% Database Layer
+    subgraph PostgreSQL_DB ["PostgreSQL Database"]
+        MainPool[("Main RW Pool<br>(campaigns, communications, orders)")]
+        AIPool[("AI Read-Only Pool<br>(SELECT on customers, orders via 'ai_reader')")]
+    end
+
+    %% Channel Simulator
+    subgraph Channel_Service ["Channel Simulator (FastAPI)"]
+        Simulator["Simulated Funnel<br>(sent → delivered → opened → clicked → converted)"]
+    end
+
+    %% Connections
+    UI <-->|HTTP / SSE Stream| CRM_Service
+    Agent <-->|JSON Prompt / History| Gemini
+    Agent <-->|Persists State| Checkpoint
+    Workers <-->|Queue Jobs| Queues
+    
+    Workers -->|POST /api/send| Channel_Service
+    Channel_Service -->|POST /api/receipts Webhooks| Workers
+    
+    Workers <-->|Write / Update| MainPool
+    Agent <-->|Safe SELECT Queries (SQLGuard)| AIPool
 ```
+
 
 * **React Frontend**: Built using TypeScript and styled with custom glassmorphism CSS. It handles the campaign chat interface, custom segment rules preview, and campaign statistics dashboards. It streams real-time agent thinking steps via Server-Sent Events (SSE) and polls campaign performance indicators automatically.
 * **CRM Service (FastAPI)**: The central business logic orchestrator. It manages user chat sessions, segment calculations, message templates, campaigns, and delivery statuses. It hosts background threads that process Redis task queues asynchronously.

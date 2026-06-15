@@ -314,6 +314,7 @@ You are an expert CRM analyst. Suggest 2-3 target segments based on the database
    - "filters": A dictionary containing specific keys: "cities" (list of cities, e.g. ["Delhi"], or empty array for all), "tags" (list of tags, e.g. ["vip", "lapsed"], or empty array for all), "min_spent" (integer or null), "min_orders" (integer or null).
    - "reason": Clear business reason explaining why targeting this group is a good idea.
 3. Return ONLY a valid JSON array of objects. No markdown, no explanation.
+4. CRITICAL: Never use double quotes inside string values (like 'name' or 'reason'). If you need quotation marks, use single quotes (e.g., 'VIP' instead of \"VIP\") to prevent JSON syntax crashes.
 
 Example:
 [
