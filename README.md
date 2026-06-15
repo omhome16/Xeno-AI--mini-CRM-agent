@@ -57,7 +57,7 @@ graph TD
     Channel_Service -->|POST /api/receipts Webhooks| Workers
     
     Workers <-->|Write / Update| MainPool
-    Agent <-->|Safe SELECT Queries (SQLGuard)| AIPool
+    Agent <-->|Safe SELECT Queries - SQLGuard| AIPool
 ```
 
 
